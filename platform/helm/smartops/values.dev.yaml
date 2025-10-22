@@ -6,17 +6,19 @@ global:
       project: smartops
       env: dev
 
-# subchart toggles (placeholders for later phases)
+# control subcharts through these flags (disabled in dev to avoid clash)
 telemetry:
-  enabled: true
-loki:
-  enabled: true
-otel:
-  enabled: true
+  prometheus:
+    enabled: false
+  loki:
+    enabled: false
+  otel:
+    enabled: false
+
 grafana:
   adminPassword: "SmartOps@123"
 
-# apps (placeholders — implemented in later phases)
+# apps (placeholders — enabled later phases)
 apps:
   erpSimulator:
     enabled: false
