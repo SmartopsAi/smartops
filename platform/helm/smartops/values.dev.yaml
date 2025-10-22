@@ -1,0 +1,30 @@
+global:
+  smartops:
+    env: dev
+    namespace: smartops-dev
+    labels:
+      project: smartops
+      env: dev
+
+# subchart toggles (placeholders for later phases)
+telemetry:
+  enabled: true
+loki:
+  enabled: true
+otel:
+  enabled: true
+grafana:
+  adminPassword: "SmartOps@123"
+
+# apps (placeholders — implemented in later phases)
+apps:
+  erpSimulator:
+    enabled: false
+  orchestrator:
+    enabled: false
+  policyEngine:
+    enabled: false
+  agentDetect:
+    enabled: false
+  agentDiagnose:
+    enabled: false
