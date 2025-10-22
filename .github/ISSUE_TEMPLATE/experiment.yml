@@ -1,0 +1,11 @@
+name: Experiment
+description: ML/Heuristic experiment
+title: "[exp]: "
+labels: [experiment]
+body:
+  - type: textarea
+    id: hypothesis
+    attributes: { label: Hypothesis }
+  - type: textarea
+    id: design
+    attributes: { label: Design & metrics (F1/FPR/latency) }

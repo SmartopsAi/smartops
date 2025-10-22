@@ -1,0 +1,18 @@
+name: Feature
+description: Request a feature
+title: "[feat]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: value
+    attributes: { label: Value, description: Why do we need this? }
+  - type: textarea
+    id: scope
+    attributes: { label: Scope, description: In/Out of scope }
+  - type: checkboxes
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      options:
+        - label: Lint/tests included
+        - label: Docs updated

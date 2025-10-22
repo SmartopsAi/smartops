@@ -1,0 +1,11 @@
+name: Evaluation Report
+description: Record evaluation outcomes
+title: "[eval]: "
+labels: [evaluation]
+body:
+  - type: textarea
+    id: summary
+    attributes: { label: Summary & data links }
+  - type: textarea
+    id: kpis
+    attributes: { label: KPIs (MTTR, Auto-heal %, F1, FPR, SLA) }

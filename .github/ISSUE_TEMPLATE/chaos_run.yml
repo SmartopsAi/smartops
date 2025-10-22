@@ -1,0 +1,11 @@
+name: Chaos Run
+description: Plan a chaos test
+title: "[chaos]: "
+labels: [chaos]
+body:
+  - type: dropdown
+    id: kind
+    attributes: { label: Kind, options: [pod-kill, cpu-burn, mem-leak, net-delay, node-drain] }
+  - type: textarea
+    id: safety
+    attributes: { label: Safety & blast radius }

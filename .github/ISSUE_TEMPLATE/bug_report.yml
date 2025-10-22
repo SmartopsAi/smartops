@@ -1,0 +1,18 @@
+name: Bug Report
+description: Report a problem
+title: "[bug]: "
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes: { label: Summary, description: What happened? }
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes: { label: Reproduction, description: Steps, data, screenshots }
+  - type: input
+    id: component
+    attributes: { label: Component, placeholder: apps/orchestrator }
+  - type: dropdown
+    id: env
+    attributes: { label: Environment, options: [dev, stage, prod] }
