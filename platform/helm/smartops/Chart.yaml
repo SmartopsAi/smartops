@@ -5,7 +5,6 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 
-# Subcharts with conditions (we'll control via values files per env)
 dependencies:
   - name: kube-prometheus-stack
     repository: https://prometheus-community.github.io/helm-charts
@@ -22,3 +21,7 @@ dependencies:
     version: "*"
     alias: otelcol
     condition: telemetry.otel.enabled
+  - name: erp-simulator
+    repository: "file://charts/erp-simulator"
+    version: "0.1.0"
+    condition: apps.erpSimulator.enabled

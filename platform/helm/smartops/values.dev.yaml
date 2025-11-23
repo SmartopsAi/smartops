@@ -9,7 +9,9 @@ global:
 # control subcharts through these flags (disabled in dev to avoid clash)
 telemetry:
   prometheus:
-    enabled: false
+    enabled: true
+    prometheus-node-exporter:
+      enabled: false   # <-- disable for Docker Desktop
   loki:
     enabled: false
   otel:
@@ -21,7 +23,7 @@ grafana:
 # apps (placeholders — enabled later phases)
 apps:
   erpSimulator:
-    enabled: false
+    enabled: true
   orchestrator:
     enabled: false
   policyEngine:
@@ -30,3 +32,4 @@ apps:
     enabled: false
   agentDiagnose:
     enabled: false
+

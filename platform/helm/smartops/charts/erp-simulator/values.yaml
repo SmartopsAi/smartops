@@ -1,0 +1,32 @@
+enabled: true
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/smartops-ai/erp-simulator
+  tag: "dev"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+env: "dev"
+logLevel: "INFO"
+
+otel:
+  otlpEndpoint: "http://otelcol-opentelemetry-collector.smartops-telemetry:4317"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+podAnnotations: {}
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
