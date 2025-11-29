@@ -1,16 +1,17 @@
-{{- if .Values.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "erp-simulator.fullname" . }}
   labels:
-    {{- include "erp-simulator.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "erp-simulator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: erp-simulator
 spec:
   type: {{ .Values.service.type }}
   selector:
-    {{- include "erp-simulator.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "erp-simulator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: http
       port: {{ .Values.service.port }}
-      targetPort: http
-{{- end }}
+      targetPort: {{ .Values.service.port }}

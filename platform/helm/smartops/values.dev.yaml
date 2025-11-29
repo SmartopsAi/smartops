@@ -6,26 +6,109 @@ global:
       project: smartops
       env: dev
 
-# control subcharts through these flags (disabled in dev to avoid clash)
+# ------------------------------------------
+# Telemetry stack (SmartOps-level toggles)
+# ------------------------------------------
 telemetry:
   prometheus:
     enabled: true
     prometheus-node-exporter:
-      enabled: false   # <-- disable for Docker Desktop
+      enabled: false
   loki:
     enabled: false
   otel:
+    enabled: true
+  tempo:
+    enabled: true
+
+# ------------------------------------------
+# kube-prometheus-stack overrides
+# (THIS is where node-exporter must be disabled)
+# ------------------------------------------
+prometheus:
+  grafana:
+    adminUser: "admin"
+    adminPassword: "SmartOps@123"
+
+    grafana.ini:
+      auth:
+        disable_login_form: false
+
+    datasources:
+      datasources.yaml:
+        apiVersion: 1
+        datasources:
+          - name: Tempo
+            type: tempo
+            uid: tempo
+            access: proxy
+            url: http://smartops-tempo:3200
+            isDefault: false
+            jsonData:
+              httpMethod: GET
+              serviceMap:
+                datasourceUid: "prometheus"
+              nodeGraph:
+                enabled: true
+              traceQuery:
+                timeShiftEnabled: false
+                spanStartTimeShift: "0s"
+                spanEndTimeShift: "0s"
+
+  # 🚫 Disable node exporter (correct place under the alias)
+  prometheus-node-exporter:
     enabled: false
 
-grafana:
-  adminPassword: "SmartOps@123"
+  # 🚫 Extra fallback for older kube-prometheus-stack versions
+  nodeExporter:
+    enabled: false
 
-# apps (placeholders — enabled later phases)
+
+# ------------------------------------------
+# Tempo configuration
+# ------------------------------------------
+tempo:
+  tempo:
+    server:
+      http_listen_port: 3200
+
+    service:
+      ports:
+        - name: http
+          port: 3200
+          targetPort: 3200
+        - name: otlp-grpc
+          port: 4317
+          targetPort: 4317
+
+    receivers:
+      otlp:
+        protocols:
+          grpc: {}
+          http: {}
+      jaeger:
+        protocols:
+          thrift_compact: {}
+          thrift_binary: {}
+          grpc: {}
+      zipkin:
+        endpoint: 0.0.0.0:9411
+
+    ingester:
+      max_block_bytes: 104857600
+
+    compactor:
+      compaction:
+        block_retention: 24h
+
+# ------------------------------------------
+# Application toggles
+# ------------------------------------------
 apps:
   erpSimulator:
     enabled: true
   orchestrator:
-    enabled: false
+    enabled: true
   policyEngine:
     enabled: false
   agentDetect:
@@ -33,3 +116,138 @@ apps:
   agentDiagnose:
     enabled: false
 
+# ------------------------------------------
+# ERP SIMULATOR
+# ------------------------------------------
+erp-simulator:
+  enabled: true
+
+  image:
+    repository: ghcr.io/vgamaka/erp-simulator
+    tag: "dev-phase3.1"   # or dev-phase3 when rebuild
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 8000
+
+  otel:
+    enabled: true
+    endpoint: "http://smartops-otelcol:4317"
+    serviceName: "erp-simulator"
+    resourceAttributes: "service.name=erp-simulator,service.namespace=smartops-dev,deployment.environment=dev"
+
+  metrics:
+    enabled: true
+    path: /metrics
+    interval: 15s
+
+  serviceMonitor:
+    enabled: true
+    additionalLabels: {}
+
+  resources: {}
+
+  # simulator overrides
+  simulator:
+    modes:
+      memoryLeak: false      # default off in dev; you can flip for labs
+      cpuSpike: false
+      latencyJitter: false
+      errorBurst: false
+    baseErrorRate: 0.05      # base 5% error rate
+    maxExtraLatencyMs: 1000  # up to 1s extra latency when jitter enabled
+
+
+# ------------------------------------------
+# ORCHESTRATOR
+# ------------------------------------------
+orchestrator:
+  enabled: true
+
+  image:
+    repository: ghcr.io/vgamaka/smartops-orchestrator
+    tag: fix-metrics
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 8001
+
+  otel:
+    enabled: true
+    endpoint: "http://smartops-otelcol:4317"
+    serviceName: "smartops-orchestrator"
+    resourceAttributes: "service.name=smartops-orchestrator,service.namespace=smartops-dev,deployment.environment=dev"
+
+  resources: {}
+
+# ------------------------------------------
+# OTEL COLLECTOR
+# ------------------------------------------
+otelcol:
+  enabled: true
+  mode: deployment
+
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.109.0"
+
+  config:
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      batch: {}
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+    exporters:
+
+      # ---------------------------
+      # Tempo exporter
+      # ---------------------------
+      otlp/tempo:
+        endpoint: smartops-tempo:4317
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+
+      # Debug exporters
+      debug:
+        verbosity: detailed
+      logging:
+        loglevel: debug
+
+    service:
+      telemetry:
+        metrics:
+          address: "0.0.0.0:8889"
+
+      pipelines:
+
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [logging, debug, otlp/tempo]
+
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [debug]

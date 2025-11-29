@@ -11,17 +11,32 @@ dependencies:
     version: "*"
     alias: prometheus
     condition: telemetry.prometheus.enabled
+
   - name: loki-stack
     repository: https://grafana.github.io/helm-charts
     version: "*"
     alias: loki
     condition: telemetry.loki.enabled
+
   - name: opentelemetry-collector
     repository: https://open-telemetry.github.io/opentelemetry-helm-charts
     version: "*"
     alias: otelcol
     condition: telemetry.otel.enabled
+
+  # ✅ NEW: Grafana Tempo single-binary chart
+  - name: tempo
+    repository: https://grafana.github.io/helm-charts
+    version: "*"
+    alias: tempo
+    condition: telemetry.tempo.enabled
+
   - name: erp-simulator
+    version: 0.1.0
     repository: "file://charts/erp-simulator"
-    version: "0.1.0"
-    condition: apps.erpSimulator.enabled
+    condition: erp-simulator.enabled
+    
+  - name: orchestrator
+    version: 0.1.0
+    repository: "file://charts/orchestrator"
+    condition: orchestrator.enabled

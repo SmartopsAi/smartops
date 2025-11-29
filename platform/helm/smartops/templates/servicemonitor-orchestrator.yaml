@@ -1,0 +1,22 @@
+{{- if .Values.orchestrator.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: smartops-orchestrator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: orchestrator
+    app.kubernetes.io/instance: smartops
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator
+      app.kubernetes.io/instance: smartops
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 10s
+{{- end }}

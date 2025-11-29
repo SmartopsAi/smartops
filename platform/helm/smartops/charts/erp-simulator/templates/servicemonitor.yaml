@@ -1,19 +1,25 @@
-{{- if and .Values.enabled .Values.serviceMonitor.enabled }}
+{{- if .Values.serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "erp-simulator.fullname" . }}
   labels:
-    {{- include "erp-simulator.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "erp-simulator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: erp-simulator
+    {{- with .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}
   selector:
     matchLabels:
-      {{- include "erp-simulator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/name: {{ include "erp-simulator.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
   endpoints:
     - port: http
-      path: /metrics
-      interval: {{ .Values.serviceMonitor.interval }}
+      path: {{ .Values.metrics.path }}
+      interval: {{ .Values.metrics.interval }}
 {{- end }}

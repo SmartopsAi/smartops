@@ -1,0 +1,241 @@
+{{- if and .Values.orchestrator.enabled .Values.apps.orchestrator.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smartops-system-dashboard
+  namespace: {{ .Values.global.smartops.namespace }}
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/name: grafana-dashboard
+    app.kubernetes.io/part-of: smartops
+data:
+  smartops-system.json: |-
+    {
+      "id": null,
+      "uid": "smartops-system",
+      "title": "SmartOps System Overview",
+      "tags": ["smartops", "orchestrator", "erp", "kubernetes"],
+      "timezone": "browser",
+      "schemaVersion": 36,
+      "version": 1,
+      "refresh": "10s",
+      "panels": [
+        {
+          "type": "row",
+          "title": "Summary",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+          "collapsed": false,
+          "panels": []
+        },
+
+        {
+          "type": "stat",
+          "title": "Closed-loop Queue Depth",
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "values": false
+            },
+            "orientation": "horizontal",
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "orchestrator_closed_loop_queue_depth",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ]
+        },
+
+        {
+          "type": "stat",
+          "title": "Orchestrator Actions (5m rate)",
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+          "options": {
+            "reduceOptions": { "calcs": ["sum"], "values": false },
+            "orientation": "horizontal",
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(smartops_orchestrator_actions_total[5m]))",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ]
+        },
+
+        {
+          "type": "stat",
+          "title": "Guardrail Blocks (1h)",
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+          "options": {
+            "reduceOptions": { "calcs": ["sum"], "values": false },
+            "orientation": "horizontal",
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(increase(orchestrator_closed_loop_guardrail_blocks_total[1h]))",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ]
+        },
+
+        {
+          "type": "stat",
+          "title": "K8s API Errors (5m)",
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+          "options": {
+            "reduceOptions": { "calcs": ["sum"], "values": false },
+            "orientation": "horizontal",
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(increase(smartops_k8s_api_errors_total[5m]))",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ]
+        },
+
+        {
+          "type": "row",
+          "title": "Closed-loop Signals & Actions",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+          "collapsed": false,
+          "panels": []
+        },
+
+        {
+          "type": "timeseries",
+          "title": "Closed-loop Signals (rate)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (kind) (rate(orchestrator_closed_loop_signals_total[5m]))",
+              "legendFormat": "{{`{{kind}}`}}",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ]
+        },
+
+        {
+          "type": "timeseries",
+          "title": "Closed-loop Actions (status)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (type, status) (rate(orchestrator_closed_loop_actions_total[5m]))",
+              "legendFormat": "{{`{{type}} / {{status}}`}}",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ]
+        },
+
+        {
+          "type": "row",
+          "title": "Kubernetes Interactions",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+          "collapsed": false,
+          "panels": []
+        },
+
+        {
+          "type": "timeseries",
+          "title": "K8s API Latency p95",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(smartops_k8s_api_latency_seconds_bucket[5m])))",
+              "legendFormat": "p95",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ]
+        },
+
+        {
+          "type": "timeseries",
+          "title": "Deployment: Desired vs Ready Replicas",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (deployment) (smartops_k8s_deployment_desired_replicas)",
+              "legendFormat": "{{`{{deployment}} desired`}}",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            },
+            {
+              "refId": "B",
+              "expr": "sum by (deployment) (smartops_k8s_deployment_ready_replicas)",
+              "legendFormat": "{{`{{deployment}} ready`}}",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ]
+        },
+
+        {
+          "type": "row",
+          "title": "Guardrails & Errors",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+          "collapsed": false,
+          "panels": []
+        },
+
+        {
+          "type": "timeseries",
+          "title": "Guardrail Blocks (rate by reason)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (reason) (rate(orchestrator_closed_loop_guardrail_blocks_total[5m]))",
+              "legendFormat": "{{`{{reason}}`}}",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ]
+        },
+
+        {
+          "type": "table",
+          "title": "Guardrail Blocks (last 1h)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "orchestrator_closed_loop_guardrail_blocks_total offset 1h",
+              "datasource": { "type": "prometheus", "uid": "prometheus" }
+            }
+          ],
+          "transformations": [
+            { "id": "labelsToFields", "options": {} }
+          ]
+        }
+      ],
+
+      "templating": {
+        "list": [
+          {
+            "type": "query",
+            "name": "namespace",
+            "label": "Namespace",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": "label_values(smartops_k8s_deployment_desired_replicas, namespace)",
+            "refresh": 1,
+            "multi": true,
+            "includeAll": true,
+            "current": { "text": "All", "value": "$__all" }
+          }
+        ]
+      },
+
+      "time": { "from": "now-1h", "to": "now" }
+    }
+{{- end }}
