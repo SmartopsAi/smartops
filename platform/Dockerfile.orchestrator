@@ -1,15 +1,24 @@
 FROM python:3.11-slim
 
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# install deps first
+# Copy orchestrator-only requirements
 COPY apps/orchestrator/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# copy entire project (needed so "apps.orchestrator" imports work)
-COPY apps /app/apps
+# Copy ONLY orchestrator folder into container
+COPY apps/orchestrator /app
 
-# expose orchestrator port
+# Ensure Python imports work
+ENV PYTHONPATH="/app"
+
+# Expose orchestrator port
 EXPOSE 8001
 
-CMD ["uvicorn", "apps.orchestrator.app:app", "--host", "0.0.0.0", "--port", "8001"]
+# Run FastAPI
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001"]
