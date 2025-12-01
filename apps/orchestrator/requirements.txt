@@ -18,5 +18,6 @@ opentelemetry-instrumentation-logging
 opentelemetry-instrumentation-requests
 opentelemetry-instrumentation-urllib
 prometheus-client
+prometheus_fastapi_instrumentator
 
 python-dotenv
