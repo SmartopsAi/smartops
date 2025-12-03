@@ -1,0 +1,6 @@
+apiVersion: v2
+name: erp-simulator
+description: SmartOps ERP Simulator service (FastAPI + Uvicorn), with Prometheus metrics and OpenTelemetry tracing
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

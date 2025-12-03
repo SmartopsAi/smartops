@@ -1,0 +1,23 @@
+{{- if and .Values.orchestrator.enabled .Values.apps.orchestrator.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: smartops-orchestrator
+  namespace: {{ .Values.global.smartops.namespace }}
+  labels:
+    app.kubernetes.io/name: orchestrator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: orchestrator
+    {{- range $k, $v := .Values.global.smartops.labels }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+spec:
+  type: {{ .Values.orchestrator.service.type }}
+  selector:
+    app.kubernetes.io/name: orchestrator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.orchestrator.service.port }}
+      targetPort: http
+{{- end }}

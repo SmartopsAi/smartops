@@ -1,0 +1,23 @@
+fastapi==0.115.4
+uvicorn[standard]==0.32.0
+prometheus-client==0.21.0
+
+# OpenTelemetry core
+opentelemetry-api==1.26.0
+opentelemetry-sdk==1.26.0
+opentelemetry-exporter-otlp==1.26.0
+
+# Instrumentations (valid)
+opentelemetry-instrumentation-fastapi==0.47b0
+opentelemetry-instrumentation-asgi==0.47b0
+opentelemetry-instrumentation-logging==0.47b0
+opentelemetry-instrumentation-requests==0.47b0
+opentelemetry-instrumentation-urllib==0.47b0
+opentelemetry-instrumentation-wsgi==0.47b0
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-requests
+opentelemetry-propagator-b3
+
+python-dotenv==1.0.1

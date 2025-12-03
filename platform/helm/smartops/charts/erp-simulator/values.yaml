@@ -1,0 +1,51 @@
+# Default values for erp-simulator subchart.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/vgamaka/erp-simulator
+  tag: "dev-phase3"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+metrics:
+  enabled: true
+  path: /metrics
+  interval: 15s
+
+otel:
+  enabled: true
+  # Inside cluster, adjust if your collector service name/namespace differs
+  endpoint: "http://otel-collector:4317"
+  serviceName: "erp-simulator"
+  # Passed directly to OTEL_RESOURCE_ATTRIBUTES
+  resourceAttributes: "service.name=erp-simulator,service.namespace=smartops,deployment.environment=dev"
+
+# Phase 3: simulator anomaly configuration
+simulator:
+  modes:
+    memoryLeak: false
+    cpuSpike: false
+    latencyJitter: false
+    errorBurst: false
+  baseErrorRate: 0.05
+  maxExtraLatencyMs: 1000
+
+resources: {}
+  # Example:
+  # limits:
+  #   cpu: 500m
+  #   memory: 512Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 256Mi
+
+serviceMonitor:
+  enabled: true
+  additionalLabels: {}
+  # Example if your Prometheus operator uses a selector:
+  # additionalLabels:
+  #   release: prometheus
