@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+pydantic
+lark-parser
+requests
+python-dotenv
