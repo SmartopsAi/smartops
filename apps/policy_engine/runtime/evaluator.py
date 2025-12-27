@@ -1,79 +1,38 @@
-from typing import List, Union, Dict
+from __future__ import annotations
 
 from datetime import datetime
-from apps.policy_engine.dsl.model import Policy, Condition, Action
-from apps.policy_engine.dsl.parser import load_policies_from_file
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from apps.policy_engine.dsl.model import Action, Policy
 from apps.policy_engine.schemas.models import (
+    ActionPlan,
     AnomalySignal,
     RcaSignal,
-    ActionPlan,
-    Target,
     ScaleSpec,
+    Target,
 )
-
-# Path to your default policy file (relative to project root)
-POLICY_FILE_PATH = "apps/policy_engine/repository/default.policy"
 
 # ----------------------
 # Guardrail configuration
 # ----------------------
 MIN_REPLICAS = 1
 MAX_REPLICAS = 10
-MAX_SCALE_STEP = 2  # (for future use if you compare against current replicas)
-
 RESTART_COOLDOWN_SECONDS = 120
 
 # Track last restart time per target (namespace/name)
 _last_restart_at: Dict[str, datetime] = {}
 
 
-
-
-# Load policies at startup, but don't crash the app if something goes wrong
-# try:
-#     POLICIES: List[Policy] = load_policies_from_file(POLICY_FILE_PATH)
-#     print(f"Loaded {len(POLICIES)} policies from {POLICY_FILE_PATH}")
-# except Exception as e:
-#     print(f"⚠️ Failed to load policies from {POLICY_FILE_PATH}: {e}")
-#     POLICIES: List[Policy] = []
-
-def _load_policies_safe() -> List[Policy]:
+def _get_field_value_from_signal(field: str, signal: Union[AnomalySignal, RcaSignal]):
     """
-    Always load policies fresh from disk.
-    This makes it easy to edit default.policy and see effects immediately.
-    """
-    try:
-        policies = load_policies_from_file(POLICY_FILE_PATH)
-        # Optional: small debug print
-        # print(f"[PolicyEngine] Loaded {len(policies)} policies from {POLICY_FILE_PATH}")
-        return policies
-    except Exception as e:
-        print(f"⚠️ Failed to load policies from {POLICY_FILE_PATH}: {e}")
-        return []
-
-
-
-def _get_field_value_from_signal(
-    field: str, signal: Union[AnomalySignal, RcaSignal]
-):
-    """
-    Map DSL field names to actual values from the signal object.
-
-    Supported fields:
-      - anomaly.type
-      - anomaly.score
-      - rca.cause
-      - rca.probability
+    WHY:
+    - Bridges DSL field names to real signal values.
     """
     if field == "anomaly.type":
-        if isinstance(signal, AnomalySignal):
-            return signal.type
-        return None
+        return signal.type if isinstance(signal, AnomalySignal) else None
 
     if field == "anomaly.score":
-        if isinstance(signal, AnomalySignal):
-            return signal.score
-        return None
+        return signal.score if isinstance(signal, AnomalySignal) else None
 
     if field == "rca.cause":
         if isinstance(signal, RcaSignal) and signal.rankedCauses:
@@ -90,7 +49,8 @@ def _get_field_value_from_signal(
 
 def _compare(op: str, left, right) -> bool:
     """
-    Compare left <op> right, where op is ==, >, <, >=, <=
+    WHY:
+    - Safely evaluates DSL comparisons.
     """
     if left is None:
         return False
@@ -111,7 +71,8 @@ def _compare(op: str, left, right) -> bool:
 
 def _policy_matches(policy: Policy, signal: Union[AnomalySignal, RcaSignal]) -> bool:
     """
-    Returns True if all conditions in this policy are satisfied for the signal.
+    WHY:
+    - A policy matches only when ALL conditions are true (AND logic).
     """
     for cond in policy.conditions:
         left = _get_field_value_from_signal(cond.field, signal)
@@ -120,82 +81,192 @@ def _policy_matches(policy: Policy, signal: Union[AnomalySignal, RcaSignal]) -> 
     return True
 
 
+def _select_best_policy(matches: List[Policy]) -> Optional[Policy]:
+    """
+    WHY:
+    - Conflict resolution:
+      1) Highest priority wins
+      2) If tie: more conditions wins (more specific)
+    """
+    if not matches:
+        return None
+
+    return sorted(matches, key=lambda p: (p.priority, len(p.conditions)), reverse=True)[0]
+
+
+def _signal_summary(signal: Union[AnomalySignal, RcaSignal]) -> Dict[str, Any]:
+    """
+    WHY:
+    - Keep audit logs readable (don’t dump full raw object).
+    """
+    if isinstance(signal, AnomalySignal):
+        return {
+            "signal_type": "anomaly",
+            "service": signal.service,
+            "windowId": signal.windowId,
+            "anomaly_type": signal.type,
+            "anomaly_score": signal.score,
+        }
+
+    top = signal.rankedCauses[0] if signal.rankedCauses else None
+    return {
+        "signal_type": "rca",
+        "service": signal.service,
+        "windowId": signal.windowId,
+        "top_cause": top.cause if top else None,
+        "top_probability": top.probability if top else None,
+    }
+
+
 def evaluate_signal_with_policies(
-    signal: Union[AnomalySignal, RcaSignal]
-) -> ActionPlan:
+    signal: Union[AnomalySignal, RcaSignal],
+    policies: List[Policy],
+    policy_file_path: str,
+    request_id: str,
+) -> Tuple[ActionPlan, Dict[str, Any]]:
     """
-    Evaluate the incoming signal against loaded policies and
-    produce an ActionPlan for the Orchestrator.
-
-    - Load policies fresh from disk (so edits take effect immediately)
-    - Find the first policy whose conditions all match
-    - Apply guardrails BEFORE returning the ActionPlan
+    WHY (STEP 8):
+    - Returns (ActionPlan, audit_event)
+    - Audit event records:
+      * signal summary
+      * matched policies
+      * chosen policy
+      * final decision
+      * guardrail reason
     """
 
-    policies = _load_policies_safe()
-
-    # For now, always act on the ERP simulator deployment
-    target = Target(
-        namespace="smartops-dev",
-        name="erp-simulator",
-        kind="Deployment",
-    )
+    # Target is what orchestrator will act on
+    target = Target(namespace="smartops-dev", name="erp-simulator", kind="Deployment")
     target_key = f"{target.namespace}/{target.name}"
 
-    for policy in policies:
-        if _policy_matches(policy, signal):
-            action: Action = policy.action
+    # 1) Match policies
+    matches: List[Policy] = [p for p in policies if _policy_matches(p, signal)]
+    best = _select_best_policy(matches)
 
-            # -----------------------
-            # RESTART with cooldown
-            # -----------------------
-            if action.kind == "restart":
-                now = datetime.utcnow()
-                last = _last_restart_at.get(target_key)
+    matched_policies = [
+        {"name": p.name, "priority": p.priority, "conditions": len(p.conditions)}
+        for p in matches
+    ]
 
-                if last and (now - last).total_seconds() < RESTART_COOLDOWN_SECONDS:
-                    return ActionPlan(
-                        type="restart",
-                        dry_run=True,
-                        verify=True,
-                        target=target,
-                    )
+    # 2) If nothing matched -> safe fallback
+    if best is None:
+        plan = ActionPlan(type="restart", dry_run=True, verify=True, target=target)
 
-                _last_restart_at[target_key] = now
-                return ActionPlan(
-                    type="restart",
-                    dry_run=False,
-                    verify=True,
-                    target=target,
-                )
+        audit_event = {
+            "ts_utc": datetime.utcnow().isoformat() + "Z",
+            "request_id": request_id,
+            "policy_file_path": policy_file_path,
+            "policy_count_loaded": len(policies),
+            "signal": _signal_summary(signal),
+            "matched_policy_count": len(matches),
+            "matched_policies": matched_policies,
+            "chosen_policy": None,
+            "decision": {"type": plan.type, "dry_run": plan.dry_run, "verify": plan.verify},
+            "guardrails": {"applied": True, "reason": "no_match_fallback_restart_dry_run"},
+        }
+        return plan, audit_event
 
-            # -----------------------
-            # SCALE with replica limits
-            # -----------------------
-            if action.kind == "scale":
-                requested = action.scale_replicas or 1
+    chosen_policy_name = best.name
+    chosen_priority = best.priority
+    action: Action = best.action
 
-                # Clamp to safe range
-                safe_replicas = max(MIN_REPLICAS, min(MAX_REPLICAS, requested))
+    # 3) Apply guardrails + produce ActionPlan
+    guardrail_reason = None
 
-                dry_run = False
-                if requested < MIN_REPLICAS or requested > MAX_REPLICAS:
-                    dry_run = True
+    # RESTART guardrail (cooldown)
+    if action.kind == "restart":
+        now = datetime.utcnow()
+        last = _last_restart_at.get(target_key)
 
-                return ActionPlan(
-                    type="scale",
-                    dry_run=dry_run,
-                    verify=True,
-                    target=target,
-                    scale=ScaleSpec(replicas=safe_replicas),
-                )
+        if last and (now - last).total_seconds() < RESTART_COOLDOWN_SECONDS:
+            plan = ActionPlan(type="restart", dry_run=True, verify=True, target=target)
+            guardrail_reason = "restart_blocked_by_cooldown"
+        else:
+            _last_restart_at[target_key] = now
+            plan = ActionPlan(type="restart", dry_run=False, verify=True, target=target)
+            guardrail_reason = "restart_allowed"
 
-    # -----------------------
-    # No policy matched or none loaded -> safe fallback
-    # -----------------------
-    return ActionPlan(
-        type="restart",
-        dry_run=True,
-        verify=True,
-        target=target,
-    )
+        audit_event = {
+            "ts_utc": datetime.utcnow().isoformat() + "Z",
+            "request_id": request_id,
+            "policy_file_path": policy_file_path,
+            "policy_count_loaded": len(policies),
+            "signal": _signal_summary(signal),
+            "matched_policy_count": len(matches),
+            "matched_policies": matched_policies,
+            "chosen_policy": {"name": chosen_policy_name, "priority": chosen_priority},
+            "decision": {"type": plan.type, "dry_run": plan.dry_run, "verify": plan.verify},
+            "guardrails": {"applied": True, "reason": guardrail_reason},
+        }
+        return plan, audit_event
+
+    # SCALE guardrail (min/max clamp)
+    if action.kind == "scale":
+        requested = action.scale_replicas or 1
+        safe_replicas = max(MIN_REPLICAS, min(MAX_REPLICAS, requested))
+
+        dry_run = False
+        if requested < MIN_REPLICAS or requested > MAX_REPLICAS:
+            dry_run = True
+            guardrail_reason = "scale_outside_limits_clamped_dry_run"
+        else:
+            guardrail_reason = "scale_within_limits"
+
+        plan = ActionPlan(
+            type="scale",
+            dry_run=dry_run,
+            verify=True,
+            target=target,
+            scale=ScaleSpec(replicas=safe_replicas),
+        )
+
+        audit_event = {
+            "ts_utc": datetime.utcnow().isoformat() + "Z",
+            "request_id": request_id,
+            "policy_file_path": policy_file_path,
+            "policy_count_loaded": len(policies),
+            "signal": _signal_summary(signal),
+            "matched_policy_count": len(matches),
+            "matched_policies": matched_policies,
+            "chosen_policy": {"name": chosen_policy_name, "priority": chosen_priority},
+            "decision": {
+                "type": plan.type,
+                "dry_run": plan.dry_run,
+                "verify": plan.verify,
+                "requested_replicas": requested,
+                "replicas": safe_replicas,
+            },
+            "guardrails": {"applied": True, "reason": guardrail_reason},
+        }
+        return plan, audit_event
+
+    # Unknown action fallback
+    plan = ActionPlan(type="restart", dry_run=True, verify=True, target=target)
+    audit_event = {
+        "ts_utc": datetime.utcnow().isoformat() + "Z",
+        "request_id": request_id,
+        "policy_file_path": policy_file_path,
+        "policy_count_loaded": len(policies),
+        "signal": _signal_summary(signal),
+        "matched_policy_count": len(matches),
+        "matched_policies": matched_policies,
+        "chosen_policy": {"name": chosen_policy_name, "priority": chosen_priority},
+        "decision": {"type": plan.type, "dry_run": plan.dry_run, "verify": plan.verify},
+        "guardrails": {"applied": True, "reason": "unknown_action_fallback_restart_dry_run"},
+    }
+    return plan, audit_event
+
+
+def get_policy_status(policies: List[Policy], policy_file_path: str) -> dict:
+    """
+    WHY:
+    - Used by /v1/policy/status endpoint.
+    - Reports in-memory status.
+    """
+    return {
+        "policy_file_path": policy_file_path,
+        "policy_count": len(policies),
+        "min_replicas": MIN_REPLICAS,
+        "max_replicas": MAX_REPLICAS,
+        "restart_cooldown_seconds": RESTART_COOLDOWN_SECONDS,
+    }

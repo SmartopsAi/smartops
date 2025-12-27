@@ -1,5 +1,8 @@
-from typing import List, Optional
-from pydantic import BaseModel
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 
 # ---------- Incoming signals from AI (Kulathunga) ----------
@@ -23,7 +26,9 @@ class AnomalySignal(BaseModel):
     score: float
     type: str
     modelVersion: Optional[str] = None
-    metadata: dict = {}
+
+    # WHY: use default_factory so dict isn't shared across requests/instances
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RankedCause(BaseModel):
@@ -75,7 +80,7 @@ class PatchSpec(BaseModel):
     """
     Extra data for patch actions (the JSON patch).
     """
-    patch: dict
+    patch: Dict[str, Any]
 
 
 class ActionPlan(BaseModel):
@@ -89,3 +94,57 @@ class ActionPlan(BaseModel):
     target: Target
     scale: Optional[ScaleSpec] = None
     patch: Optional[PatchSpec] = None
+
+
+# ---------- Policy DSL validations ----------
+
+class PolicyValidateRequest(BaseModel):
+    dsl: str
+
+
+class PolicyValidateResponse(BaseModel):
+    valid: bool
+    policy_count: int = 0
+
+    # WHY: use default_factory so list isn't shared across requests/instances
+    errors: List[str] = Field(default_factory=list)
+
+
+# ---------- Policy status / reload ----------
+
+class PolicyStatusResponse(BaseModel):
+    policy_file_path: str
+    policy_count: int
+    min_replicas: int
+    max_replicas: int
+    restart_cooldown_seconds: int
+
+
+class PolicyReloadResponse(BaseModel):
+    ok: bool
+    policy_count: int
+    source_path: str
+    error: Optional[str] = None
+
+
+
+# ---------- NEW: Audit log read models ----------
+
+class PolicyAuditEvent(BaseModel):
+    """
+    WHY:
+    - Flexible structure because audit events contain nested dicts.
+    - We keep it as Dict[str, Any] to avoid over-complicating.
+    """
+    event: Dict[str, Any]
+
+
+class PolicyAuditResponse(BaseModel):
+    """
+    Response for GET /v1/policy/audit
+    """
+    ok: bool
+    log_path: str
+    returned: int
+    events: List[PolicyAuditEvent] = Field(default_factory=list)
+    error: Optional[str] = None

@@ -5,13 +5,12 @@ from lark import Lark, Transformer, v_args
 from apps.policy_engine.dsl.model import Policy, Condition, Action
 
 
-# -------- DSL Grammar (Lark) --------
-# NOTE: No '#' comments inside the grammar string.
-
 DSL_GRAMMAR = r"""
-    ?start: policy+
+    start: policy+
 
-    policy: "POLICY" ESCAPED_STRING ":" "WHEN" condition_list "THEN" action
+    policy: "POLICY" ESCAPED_STRING ":" "WHEN" condition_list "THEN" action priority?
+
+    priority: "PRIORITY" NUMBER
 
     condition_list: condition ("AND" condition)*
 
@@ -39,35 +38,31 @@ DSL_GRAMMAR = r"""
 
 @v_args(inline=True)
 class PolicyTransformer(Transformer):
-    # Top-level: list of policies
+    # Top-level: always return list
     def start(self, *policies):
-        # Tree('start', [Policy, Policy, ...]) -> [Policy, Policy, ...]
         return list(policies)
 
-    # Turn ESCAPED_STRING into a normal Python string
+    # Values
     def string(self, token):
         return token.value[1:-1]
 
-    # Turn NUMBER into int or float
     def number(self, token):
         text = token.value
         if "." in text:
             return float(text)
         return int(text)
 
-    # FIELD tokens like "anomaly.type"
+    # Tokens
     def FIELD(self, token):
         return token.value
 
-    # COMPARE tokens: "==", ">", "<", etc.
     def COMPARE(self, token):
         return token.value
 
-    # One Condition object
+    # Conditions
     def condition(self, field, op, value):
         return Condition(field=field, op=op, value=value)
 
-    # List of conditions: cond AND cond AND cond...
     def condition_list(self, first, *rest):
         conditions = [first]
         conditions.extend(rest)
@@ -78,30 +73,40 @@ class PolicyTransformer(Transformer):
         return Action(kind="restart")
 
     def scale(self, number):
-        # "scale(service, 6)" -> Action(kind="scale", scale_replicas=6)
         return Action(kind="scale", scale_replicas=int(number.value))
 
-    # One Policy object
-    def policy(self, name_token, conditions, action):
-        # ESCAPED_STRING like "\"restart_on_memory_leak\"" -> restart_on_memory_leak
+    # Priority (ONLY number token comes here)
+    def priority(self, number_token):
+        return int(number_token.value)
+
+    # Policy (IMPORTANT FIX)
+    def policy(self, name_token, conditions, action, *rest):
+        """
+        WHY:
+        - 'rest' may contain priority or may be empty
+        - This avoids Lark skipping the transformer
+        """
         name = name_token.value[1:-1]
-        return Policy(name=name, conditions=conditions, action=action)
 
+        priority = 0
+        if rest:
+            priority = int(rest[0])
 
+        return Policy(
+            name=name,
+            conditions=conditions,
+            action=action,
+            priority=priority
+        )
 
-# -------- Public helper functions --------
 
 _parser = Lark(DSL_GRAMMAR, start="start", parser="lalr")
 
 
 def parse_policies(text: str) -> List[Policy]:
-    """
-    Parse DSL text into a list of Policy objects.
-    """
     tree = _parser.parse(text)
     transformer = PolicyTransformer()
-    result = transformer.transform(tree)
-    return result
+    return transformer.transform(tree)
 
 
 def load_policies_from_file(path: str) -> List[Policy]:

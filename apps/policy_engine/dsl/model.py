@@ -22,7 +22,7 @@ class Action:
     restart(service)
     scale(service, 6)
     """
-    kind: str                    # "restart" or "scale"
+    kind: str                          # "restart" or "scale"
     scale_replicas: Optional[int] = None  # used only for "scale"
 
 
@@ -33,7 +33,9 @@ class Policy:
       - name: "restart_on_memory_leak"
       - list of conditions
       - exactly one action
+      - priority: larger number = higher priority
     """
     name: str
     conditions: List[Condition]
     action: Action
+    priority: int = 0   # default priority if not provided
