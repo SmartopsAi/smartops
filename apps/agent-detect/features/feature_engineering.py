@@ -1,4 +1,9 @@
 import numpy as np
+import json
+import os
+
+# Ensure runtime directory exists (for dashboard & prediction)
+os.makedirs("data/runtime", exist_ok=True)
 
 def extract_metric_series(window_values, metric_name):
     """
@@ -10,6 +15,7 @@ def extract_metric_series(window_values, metric_name):
         if metric_name in entry
     ]
 
+
 def compute_features(series):
     """
     Compute statistical & temporal features from a numeric series
@@ -17,7 +23,7 @@ def compute_features(series):
     if len(series) < 2:
         return None
 
-    arr = np.array(series)
+    arr = np.array(series, dtype=float)
 
     mean = float(np.mean(arr))
     std = float(np.std(arr))
@@ -39,9 +45,11 @@ def compute_features(series):
         "spike": spike
     }
 
+
 def build_feature_vector(window_values, metrics):
     """
     Build full feature vector for selected metrics
+    Also saves latest feature vector for dashboard & prediction preview
     """
     feature_vector = {}
 
@@ -49,8 +57,17 @@ def build_feature_vector(window_values, metrics):
         series = extract_metric_series(window_values, metric)
         features = compute_features(series)
 
-        if features:
-            for key, value in features.items():
-                feature_vector[f"{metric}_{key}"] = value
+        if not features:
+            continue
+
+        for key, value in features.items():
+            feature_vector[f"{metric}_{key}"] = value
+
+    # -------------------------------
+    # SAVE latest features (Phase 5 – Prediction preview)
+    # -------------------------------
+    if feature_vector:
+        with open("data/runtime/latest_features.json", "w") as f:
+            json.dump(feature_vector, f, indent=2)
 
     return feature_vector
