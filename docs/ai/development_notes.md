@@ -124,3 +124,83 @@ Artifacts:
 
 Phase 0 was completed successfully with all required documentation,
 baseline datasets, and system readiness checks in place.
+
+---
+
+## Phase 1 – Data Collection & Feature Pipeline (COMPLETED)
+
+### Objective
+
+The goal of Phase 1 was to build a continuous, real-time pipeline that transforms
+raw telemetry into AI-ready feature vectors, independent of any anomaly detection model.
+
+---
+
+### Phase 1.1 – Streaming Data Collection
+
+- Implemented continuous metrics ingestion from the ERP Simulator
+- Parsed Prometheus-format telemetry into numeric signals
+- Normalized system-specific metrics into semantic AI features
+
+Artifacts:
+
+- collector/metrics_collector.py
+- collector/prom_parser.py
+- collector/metric_map.py
+
+---
+
+### Phase 1.2 – Data Grouping & Time Windowing
+
+- Implemented sliding time windows (60 seconds)
+- Grouped streaming data into temporal contexts
+- Ensured continuous window updates with bounded memory
+
+Artifacts:
+
+- features/windowing.py
+
+---
+
+### Phase 1.3 – Continuous Feature Engineering
+
+- Extracted statistical features (mean, std, min, max)
+- Extracted temporal features (trend slope)
+- Implemented spike detection
+- Generated fixed-size feature vectors suitable for ML models
+
+Artifacts:
+
+- features/feature_engineering.py
+
+---
+
+### Phase 1.4 – Automatic Labeling Support
+
+- Integrated system-level ground truth (`modes_enabled`)
+- Attached labels to feature windows for evaluation
+- Ensured labels are not used during anomaly detection
+
+Artifacts:
+
+- dataset/dataset_writer.py
+
+---
+
+### Phase 1.5 – Dataset Construction
+
+- Built a continuous dataset builder
+- Stored window-level feature vectors with timestamps and labels
+- Generated datasets for training and evaluation in Phase 2
+
+Artifacts:
+
+- data/datasets/features.csv
+
+---
+
+### Phase 1 Status
+
+Phase 1 was successfully completed with a fully operational, continuously running
+data collection and feature pipeline. The system is model-agnostic and ready for
+anomaly detection and root cause analysis.
