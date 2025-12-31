@@ -1,6 +1,6 @@
 {
-  "anomaly_id": "A-1766840773",
-  "timestamp": "2025-12-27T13:06:13.309980",
+  "anomaly_id": "A-1767176752",
+  "timestamp": "2025-12-31T10:25:52.562907",
   "detected_anomaly": "latency_jitter",
   "root_cause": {
     "component": "DatabaseService",
