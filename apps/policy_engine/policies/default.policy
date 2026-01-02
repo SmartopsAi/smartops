@@ -1,0 +1,9 @@
+POLICY "restart_on_latency_jitter":
+  WHEN anomaly.type == "latency_jitter"
+  THEN restart(service)
+  PRIORITY 10
+
+POLICY "scale_on_cpu_saturation":
+  WHEN rca.cause == "cpu_saturation"
+  THEN scale(service, 6)
+  PRIORITY 5

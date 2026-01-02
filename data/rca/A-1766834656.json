@@ -1,0 +1,23 @@
+{
+  "anomaly_id": "A-1766834656",
+  "timestamp": "2025-12-27T11:24:16.133848",
+  "detected_anomaly": "cpu_spike",
+  "root_cause": {
+    "component": "DatabaseService",
+    "type": "Resource Saturation",
+    "signal": "cpu_burn_ms \u2191"
+  },
+  "evidence": {
+    "metrics": [
+      "cpu_burn_ms \u2191",
+      "request_count \u2191"
+    ],
+    "logs": [
+      "TimeoutError in OrderService"
+    ],
+    "traces": [
+      "OrderService \u2192 DatabaseService (850ms)"
+    ]
+  },
+  "confidence": 1.0
+}

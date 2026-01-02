@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SmartOps – Live Dashboard</title>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f4f6f8;
+      color: #1f2937;
+    }
+
+    header {
+      background: #0f172a;
+      color: white;
+      padding: 16px 24px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 22px;
+    }
+
+    header p {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+
+    .container {
+      padding: 20px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+    }
+
+    .card h2 {
+      margin-top: 0;
+      font-size: 16px;
+      border-bottom: 1px solid #e5e7eb;
+      padding-bottom: 6px;
+    }
+
+    pre {
+      background: #f9fafb;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      overflow-x: auto;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .green { background: #dcfce7; color: #166534; }
+    .yellow { background: #fef9c3; color: #854d0e; }
+    .red { background: #fee2e2; color: #7f1d1d; }
+    .gray { background: #e5e7eb; color: #374151; }
+
+    .metric {
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    footer {
+      text-align: center;
+      font-size: 12px;
+      color: #6b7280;
+      padding: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>SmartOps – AI-Driven ERP Observability Dashboard</h1>
+  <p>Continuous Data Collection • Anomaly Detection • Root Cause Analysis • Prediction</p>
+</header>
+
+<div class="container">
+
+  <!-- PANEL 1: Continuous Data Collection -->
+  <div class="card">
+    <h2>📊 Continuous Data Collection (Phase 1)</h2>
+    <div id="dataset"></div>
+  </div>
+
+  <!-- PANEL 2: Labeling & Validation -->
+  <div class="card">
+    <h2>🏷️ Data Labeling & Validation</h2>
+    <pre id="labels">Loading...</pre>
+  </div>
+
+  <!-- PANEL 3: Live Anomaly Detection -->
+  <div class="card">
+    <h2>🚨 Live Anomaly Detection (Phase 2)</h2>
+    <div id="detect"></div>
+  </div>
+
+  <!-- PANEL 4: Prediction Risk -->
+  <div class="card">
+    <h2>🔮 Failure Prediction Risk (Phase 5 – Preview)</h2>
+    <div id="risk" class="badge gray">Loading...</div>
+  </div>
+
+  <!-- PANEL 5: Root Cause Analysis -->
+  <div class="card" style="grid-column: span 2;">
+    <h2>🧩 Root Cause Analysis (Phase 3)</h2>
+    <pre id="rca">Loading...</pre>
+  </div>
+
+</div>
+
+<footer>
+  SmartOps Research Project • Continuous AI Pipeline • PP1 Demonstration
+</footer>
+
+<script>
+async function loadDashboard() {
+  try {
+    const dataset = await fetch("/api/dataset/stats").then(r => r.json());
+    const detect = await fetch("/api/detection/status").then(r => r.json());
+    const rca = await fetch("/api/rca/latest").then(r => r.json());
+    const risk = await fetch("/api/prediction/risk").then(r => r.json());
+
+    // Dataset panel
+    document.getElementById("dataset").innerHTML = `
+      <div class="metric">Windows collected: <b>${dataset.windows || 0}</b></div>
+      <div class="metric">Normal labels: <b>${dataset.labels?.normal || 0}</b></div>
+      <div class="metric">Anomaly labels: <b>${dataset.labels?.anomaly || 0}</b></div>
+    `;
+
+    // Labeling panel
+    document.getElementById("labels").innerText =
+      JSON.stringify(dataset, null, 2);
+
+    // Detection panel
+    if (detect.anomaly === true) {
+      document.getElementById("detect").innerHTML =
+        `<span class="badge red">ANOMALY DETECTED</span>`;
+    } else if (detect.anomaly === false) {
+      document.getElementById("detect").innerHTML =
+        `<span class="badge green">NORMAL</span>`;
+    } else {
+      document.getElementById("detect").innerHTML =
+        `<span class="badge gray">NO DATA</span>`;
+    }
+
+    // Risk panel
+    const riskEl = document.getElementById("risk");
+    riskEl.innerText = risk.risk || "UNKNOWN";
+    riskEl.className = "badge " +
+      (risk.risk === "HIGH" ? "red" :
+       risk.risk === "MEDIUM" ? "yellow" :
+       risk.risk === "LOW" ? "green" : "gray");
+
+    // RCA panel
+    document.getElementById("rca").innerText =
+      JSON.stringify(rca, null, 2);
+
+  } catch (e) {
+    console.error("Dashboard error", e);
+  }
+}
+
+setInterval(loadDashboard, 3000);
+loadDashboard();
+</script>
+
+</body>
+</html>

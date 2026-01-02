@@ -1,0 +1,64 @@
+{{- if and .Values.orchestrator.enabled .Values.apps.orchestrator.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: smartops-orchestrator
+  namespace: {{ .Values.global.smartops.namespace }}
+  labels:
+    app.kubernetes.io/name: orchestrator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: orchestrator
+    {{- range $k, $v := .Values.global.smartops.labels }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: smartops-orchestrator
+  namespace: {{ .Values.global.smartops.namespace }}
+  labels:
+    app.kubernetes.io/name: orchestrator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+rules:
+  # Read pods, logs, events in this namespace
+  # Delete permission is needed for targeted pod restarts / chaos / cleanup.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch", "delete"]
+
+  # Read & modify deployments/replicasets in this namespace
+  # Read & modify deployments/replicasets in this namespace
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+
+  # PATCH scale subresource — required for scaling
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+
+  # Read namespaces (for context only)
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: smartops-orchestrator
+  namespace: {{ .Values.global.smartops.namespace }}
+  labels:
+    app.kubernetes.io/name: orchestrator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: smartops-orchestrator
+subjects:
+  - kind: ServiceAccount
+    name: smartops-orchestrator
+    namespace: {{ .Values.global.smartops.namespace }}
+{{- end }}
