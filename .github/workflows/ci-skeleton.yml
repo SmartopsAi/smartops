@@ -1,7 +1,11 @@
 name: ci-skeleton
-on: [pull_request]
+
+on:
+  pull_request:
+  push:
+
 jobs:
-  skeleton:
+  ci-skeleton:
     runs-on: ubuntu-latest
     steps:
       - run: echo "CI skeleton — replace with lint/unit/build in Phase 3"
