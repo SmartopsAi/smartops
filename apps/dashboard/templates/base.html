@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartOps Console</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<div class="d-flex" id="wrapper">
+    <div class="sidebar" id="sidebar-wrapper">
+        <div class="sidebar-heading text-center py-4 primary-text fs-4 fw-bold text-uppercase border-bottom">
+            SmartOps
+        </div>
+        
+        <div class="list-group list-group-flush my-3">
+            <a href="/overview" class="list-group-item list-group-item-action bg-transparent {% if page == 'overview' %}active{% endif %}">
+                Dashboard Overview
+            </a>
+            <a href="/services" class="list-group-item list-group-item-action bg-transparent {% if page == 'services' %}active{% endif %}">
+                Services & Health
+            </a>
+            <a href="/anomalies" class="list-group-item list-group-item-action bg-transparent {% if page == 'anomalies' %}active{% endif %}">
+                Anomalies (Detect)
+            </a>
+            <a href="/rca" class="list-group-item list-group-item-action bg-transparent {% if page == 'rca' %}active{% endif %}">
+                RCA (Diagnose)
+            </a>
+            <a href="/policies" class="list-group-item list-group-item-action bg-transparent {% if page == 'policies' %}active{% endif %}">
+                Policies (Engine)
+            </a>
+            <a href="/actions" class="list-group-item list-group-item-action bg-transparent {% if page == 'actions' %}active{% endif %}">
+                Actions (Orchestrator)
+            </a>
+            <a href="/verification" class="list-group-item list-group-item-action bg-transparent {% if page == 'verification' %}active{% endif %}">
+                Verification
+            </a>
+            <a href="/telemetry" class="list-group-item list-group-item-action bg-transparent {% if page == 'telemetry' %}active{% endif %}">
+                Telemetry
+            </a>
+        </div>
+        
+        <div class="sidebar-footer p-3">
+            <small class="text-white-50">Mode: <strong>{{ mode|upper }}</strong></small>
+        </div>
+    </div>
+
+    <div id="page-content-wrapper" class="w-100 bg-soft-blue">
+        <nav class="navbar navbar-expand-lg navbar-light bg-light border-bottom px-4">
+            <h2 class="fs-4 m-0">
+                {% block title %}Operations Console{% endblock %}
+            </h2>
+        </nav>
+
+        <div class="container-fluid px-4 py-4">
+            {% block content %}
+            {% endblock %}
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+{% block scripts %}{% endblock %}
+
+</body>
+</html>

@@ -1,8 +1,12 @@
 from models.stats_baseline import StatisticalBaseline
 from models.isolation_forest import IsolationForestModel
 import csv
+from pathlib import Path
 
-DATASET_FILE = "data/datasets/features.csv"
+BASE_DIR = Path(__file__).resolve().parents[2]  # smartops/
+DATASET_FILE = BASE_DIR / "data" / "datasets" / "features.csv"
+
+# DATASET_FILE = "data/datasets/features.csv"
 
 def load_training_features():
     X = []

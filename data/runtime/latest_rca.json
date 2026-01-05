@@ -1,16 +1,15 @@
 {
-  "anomaly_id": "A-1767350041",
-  "timestamp": "2026-01-02T10:34:01.960682",
-  "detected_anomaly": "latency_jitter",
+  "anomaly_id": "A-1767610523",
+  "timestamp": "2026-01-05T10:55:23.510639",
+  "detected_anomaly": "memory_leak",
   "root_cause": {
     "component": "DatabaseService",
     "type": "Service Timeout",
-    "signal": "latency_jitter_ms \u2191"
+    "signal": "memory_leak_bytes \u2191"
   },
   "evidence": {
     "metrics": [
-      "latency_jitter_ms \u2191",
-      "request_latency \u2191"
+      "memory_leak_bytes \u2191"
     ],
     "logs": [
       "TimeoutError in OrderService"

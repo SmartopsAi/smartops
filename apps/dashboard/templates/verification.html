@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Action Verification{% endblock %}
+
+{% block content %}
+<div class="alert alert-info shadow-sm">
+    <i class="bi bi-info-circle-fill"></i> 
+    Verification runs automatically after Orchestrator actions. Below are the results of the latest closed-loop execution.
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100 border-success">
+            <div class="card-body text-center d-flex flex-column justify-content-center">
+                <h5 class="text-muted">Latest Verification Result</h5>
+                <h2 class="text-success fw-bold my-3">PASSED</h2>
+                <p class="text-muted mb-0">Execution ID: <span class="font-monospace">exec-8821</span></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white">Acceptance Criteria</div>
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <span><strong>Latency Check:</strong> p95 must drop below 200ms</span>
+                    <span class="badge bg-success rounded-pill">Pass (180ms)</span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <span><strong>Error Rate Check:</strong> Errors must be &lt; 1%</span>
+                    <span class="badge bg-success rounded-pill">Pass (0.2%)</span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <span><strong>Stability:</strong> Pods must be Ready for 60s</span>
+                    <span class="badge bg-success rounded-pill">Pass</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">Before / After Impact</div>
+            <div class="card-body">
+                <canvas id="chart-verification" height="80"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Mock Data for Visualization (Replace with fetch to /api/verification in future)
+    const ctx = document.getElementById('chart-verification');
+    
+    // Create a chart showing high latency dropping after the action
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: ['-5m', '-4m', '-3m', '-2m', '-1m', 'Action', '+1m', '+2m', '+3m'],
+            datasets: [
+                {
+                    label: 'Latency (ms)',
+                    data: [350, 360, 340, 380, 400, 390, 180, 175, 170], // Drop after action
+                    borderColor: '#1C4D8D',
+                    backgroundColor: 'rgba(28, 77, 141, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    segment: {
+                        borderColor: ctx => ctx.p0DataIndex >= 5 ? '#28a745' : '#1C4D8D', // Green line after action
+                        borderDash: ctx => ctx.p0DataIndex >= 5 ? [5, 5] : undefined
+                    }
+                }
+            ]
+        },
+        options: {
+            plugins: {
+                annotation: {
+                    // Requires chartjs-plugin-annotation (optional, omitted for simplicity)
+                }
+            },
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+</script>
+{% endblock %}

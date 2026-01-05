@@ -1,0 +1,2 @@
+{"timestamp": 1767607705.8757677, "policy_id": "scaling_limit", "decision": "block", "reason": "Max replicas exceeded", "guardrails_checked": [{"name": "max_replicas", "triggered": true}], "recommendations": ["Request approval"]}
+{"timestamp": 1767607645.8757894, "policy_id": "restart_safety", "decision": "allow", "reason": "Safe in dev environment", "guardrails_checked": [{"name": "prod_freeze", "triggered": false}], "recommendations": []}

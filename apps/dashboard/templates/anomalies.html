@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Anomaly Detection{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body text-center">
+                <h5 class="card-title text-muted">Current Anomaly Score</h5>
+                <h1 class="display-1 fw-bold" id="score-display">--</h1>
+                <p id="score-status" class="badge bg-secondary">Waiting...</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-8">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white">Detection Model Status</div>
+            <div class="card-body">
+                <table class="table table-borderless">
+                    <tr>
+                        <td><strong>Model Version:</strong></td>
+                        <td id="model-version">v1.0 (Isolation Forest)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Window ID:</strong></td>
+                        <td id="window-id" class="font-monospace">--</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Last Updated:</strong></td>
+                        <td id="last-updated">--</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                Feature Contributions (Why is this anomalous?)
+            </div>
+            <div class="card-body">
+                <canvas id="chart-features" height="100"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    fetch('/api/anomalies')
+    .then(response => response.json())
+    .then(data => {
+        // 1. Update Score Display
+        if (data.latest_event) {
+            const score = data.latest_event.score;
+            document.getElementById('score-display').innerText = score.toFixed(2);
+            document.getElementById('model-version').innerText = data.latest_event.model;
+            document.getElementById('last-updated').innerText = new Date(data.latest_event.ts * 1000).toLocaleString();
+
+            // Color code the status
+            const statusBadge = document.getElementById('score-status');
+            if (score > 0.7) {
+                statusBadge.className = 'badge bg-danger';
+                statusBadge.innerText = 'CRITICAL ANOMALY';
+            } else if (score > 0.5) {
+                statusBadge.className = 'badge bg-warning text-dark';
+                statusBadge.innerText = 'WARNING';
+            } else {
+                statusBadge.className = 'badge bg-success';
+                statusBadge.innerText = 'NORMAL';
+            }
+        }
+
+        // 2. Render Feature Bar Chart
+        if (data.feature_breakdown && data.feature_breakdown.top_features) {
+            document.getElementById('window-id').innerText = data.feature_breakdown.window_id;
+
+            const features = data.feature_breakdown.top_features;
+            const labels = features.map(f => f.name);
+            const values = features.map(f => f.delta); // Using 'delta' or 'value' based on your CSV
+
+            const ctx = document.getElementById('chart-features');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Deviation from Normal',
+                        data: values,
+                        backgroundColor: '#1C4D8D', // Primary Mid
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    indexAxis: 'y', // Horizontal Bar Chart for easier reading of names
+                    responsive: true,
+                    scales: {
+                        x: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}

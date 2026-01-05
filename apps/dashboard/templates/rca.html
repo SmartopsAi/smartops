@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Root Cause Analysis (RCA){% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-danger shadow-sm">
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="card-title text-danger">Latest Incident Diagnosis</h5>
+                    <p class="card-text text-muted mb-0">Incident ID: <span id="incident-id" class="font-monospace fw-bold">...</span></p>
+                </div>
+                <div class="text-end">
+                    <small class="text-muted d-block">Analysis Time</small>
+                    <span id="rca-time" class="fw-bold">--</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white">Ranked Root Causes (Probability)</div>
+            <div class="card-body">
+                <canvas id="chart-rca"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white">Supporting Evidence</div>
+            <div class="card-body">
+                <h6>Correlated Traces</h6>
+                <div class="list-group list-group-flush small" id="trace-list">
+                    <div class="text-muted fst-italic">Loading evidence...</div>
+                </div>
+                
+                <h6 class="mt-4">Logs Snippet</h6>
+                <div class="bg-light p-2 rounded border font-monospace" style="font-size: 0.8rem; height: 150px; overflow-y: auto;">
+                    [INFO] ERP Simulator started
+                    <br>[ERROR] Connection timeout to DB
+                    <br>[WARN] Retrying transaction...
+                </div>
+            </div>
+            <div class="card-footer bg-white text-center">
+                <a href="/telemetry" class="btn btn-sm btn-outline-primary">Deep Dive in Grafana</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    fetch('/api/rca')
+    .then(response => response.json())
+    .then(data => {
+        if (!data.report) return;
+
+        const rpt = data.report;
+        document.getElementById('incident-id').innerText = rpt.incident_id;
+        document.getElementById('rca-time').innerText = new Date(rpt.ts * 1000).toLocaleString();
+
+        // 1. Render Root Causes Chart
+        const causes = rpt.ranked_causes; // Expected: [{component: 'db', confidence: 0.85}, ...]
+        
+        // Prepare data for Chart.js
+        const labels = causes.map(c => `${c.component} (${c.cause})`);
+        const values = causes.map(c => c.confidence * 100); // Convert to %
+
+        new Chart(document.getElementById('chart-rca'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Confidence Score (%)',
+                    data: values,
+                    backgroundColor: values.map(v => v > 80 ? '#d9534f' : '#4988C4'), // Red if high confidence, else Blue
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                indexAxis: 'y', // Horizontal bars
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        max: 100
+                    }
+                },
+                plugins: {
+                    legend: { display: false }
+                }
+            }
+        });
+
+        // 2. Populate Evidence List
+        const traceList = document.getElementById('trace-list');
+        traceList.innerHTML = ''; // Clear loading
+        
+        if (rpt.evidence && rpt.evidence.trace_ids) {
+            rpt.evidence.trace_ids.forEach(tid => {
+                const a = document.createElement('a');
+                a.className = 'list-group-item list-group-item-action text-truncate font-monospace';
+                a.innerText = tid;
+                a.href = '#'; // In real implementation, link to Tempo
+                a.title = "View Trace";
+                traceList.appendChild(a);
+            });
+        } else {
+            traceList.innerHTML = '<div class="text-muted">No specific traces linked.</div>';
+        }
+    });
+</script>
+{% endblock %}

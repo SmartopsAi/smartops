@@ -1,4 +1,5 @@
 import time
+import os
 import requests
 from datetime import datetime
 
@@ -100,7 +101,22 @@ def run_rca():
     )
 
     reporter.print_report(report)
-    reporter.save_json(report, f"data/runtime/latest_rca.json")
+
+    # --- FIX: Dynamic Path Handling ---
+    # 1. Get the directory of THIS script (apps/agent-diagnose)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 2. Go up two levels to reach the project root (smartops/)
+    project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+    
+    # 3. Join with the data path
+    output_path = os.path.join(project_root, "data", "runtime", "latest_rca.json")
+    
+    # 4. Ensure directory exists just in case
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    print(f"[INFO] Saving report to: {output_path}")
+    reporter.save_json(report, output_path)
 
 
 # -------------------------------------------------

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Telemetry & Observability{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-body text-center p-5">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/a/a1/Grafana_logo.svg" alt="Grafana" width="64" class="mb-3">
+                <h3 class="card-title">Grafana Dashboards</h3>
+                <p class="card-text text-muted">Deep dive into system metrics, node health, and historical trends.</p>
+                <a href="http://localhost:3000" target="_blank" class="btn btn-outline-primary mt-2">
+                    Open Grafana &nearr;
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-body text-center p-5">
+                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="#4988C4" class="bi bi-hdd-network mb-3" viewBox="0 0 16 16">
+                    <path d="M4.5 5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1zM3 4.5a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0z"/>
+                    <path d="M0 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2H8.5v3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 2 14v-3a1.5 1.5 0 0 1 1.5-1.5v-3H2a2 2 0 0 1-2-2V4zm2-1a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H2zm1.5 9a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h5a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5h-5z"/>
+                </svg>
+                <h3 class="card-title">Distributed Tracing</h3>
+                <p class="card-text text-muted">Visualize request flows across microservices using Tempo.</p>
+                <a href="http://localhost:3000/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Tempo%22,%7B%7D%5D" target="_blank" class="btn btn-outline-primary mt-2">
+                    Open Tempo Explore &nearr;
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">Prometheus Status</div>
+            <div class="card-body">
+                <p><strong>Endpoint:</strong> <code class="text-primary">{{ 'http://prometheus-server' if mode == 'k8s' else 'Not Configured (Local)' }}</code></p>
+                <div class="alert alert-warning small">
+                    <i class="bi bi-exclamation-triangle"></i> 
+                    In Local Mode, telemetry links may not work unless you have local instances of Grafana/Tempo running on default ports.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

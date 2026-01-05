@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
+python-multipart
 
 # Kubernetes Client
 kubernetes
@@ -10,6 +11,8 @@ opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp
 opentelemetry-exporter-otlp-proto-grpc
+grpcio
+protobuf
 
 # Instrumentation
 opentelemetry-instrumentation

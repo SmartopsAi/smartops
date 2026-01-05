@@ -1,0 +1,10 @@
+{
+  "timestamp": 1767610523.1811054,
+  "anomaly": true,
+  "statistical": true,
+  "isolation_forest": false,
+  "ground_truth": "ANOMALY",
+  "recovering": false,
+  "recovery_windows": 0,
+  "required_recovery_windows": 3
+}

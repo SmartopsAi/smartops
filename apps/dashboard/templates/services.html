@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}Service Status{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <span class="fs-5">ERP Simulator</span>
+                <span id="badge-erp" class="badge rounded-pill" style="background-color: var(--accent);">
+                    Checking...
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="row text-center mb-4">
+                    <div class="col-4 border-end">
+                        <h4 id="erp-rps" class="text-primary fw-bold">...</h4>
+                        <small class="text-muted">RPS</small>
+                    </div>
+                    <div class="col-4 border-end">
+                        <h4 id="erp-latency" class="text-primary fw-bold">...</h4>
+                        <small class="text-muted">P95 Latency</small>
+                    </div>
+                    <div class="col-4">
+                        <h4 id="erp-errors" class="text-danger fw-bold">...</h4>
+                        <small class="text-muted">Error Rate</small>
+                    </div>
+                </div>
+                <canvas id="chart-erp-latency" height="100"></canvas>
+            </div>
+            <div class="card-footer bg-light text-end">
+                <a href="/telemetry" class="btn btn-sm btn-outline-primary">View Traces</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <span class="fs-5">SmartOps Orchestrator</span>
+                <span id="badge-orch" class="badge rounded-pill" style="background-color: var(--accent);">
+                    Checking...
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="row text-center mb-4">
+                    <div class="col-4 border-end">
+                        <h4 id="orch-rps" class="text-primary fw-bold">...</h4>
+                        <small class="text-muted">Action Tput</small>
+                    </div>
+                    <div class="col-4 border-end">
+                        <h4 id="orch-latency" class="text-primary fw-bold">...</h4>
+                        <small class="text-muted">Avg Duration</small>
+                    </div>
+                    <div class="col-4">
+                        <h4 id="orch-status" class="text-success fw-bold">OK</h4>
+                        <small class="text-muted">API Health</small>
+                    </div>
+                </div>
+                <div class="alert alert-info py-2 small">
+                    <i class="bi bi-info-circle"></i> 
+                    Responsible for executing scaling & restart actions.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">Agent Subsystems</div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Service</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th>Last Update</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Agent-Detect</td>
+                            <td>Anomaly Detection</td>
+                            <td><span class="badge bg-success">Active</span></td>
+                            <td>Real-time</td>
+                        </tr>
+                        <tr>
+                            <td>Agent-Diagnose</td>
+                            <td>Root Cause Analysis</td>
+                            <td><span class="badge bg-success">Active</span></td>
+                            <td>Event-driven</td>
+                        </tr>
+                        <tr>
+                            <td>Policy Engine</td>
+                            <td>Guardrails</td>
+                            <td><span class="badge bg-success">Active</span></td>
+                            <td>Sync</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Fetch Metrics from API
+    fetch('/api/services/metrics')
+        .then(response => response.json())
+        .then(data => {
+            const erp = data.erp;
+            
+            // Update ERP Stats
+            document.getElementById('erp-rps').innerText = erp.rps.toFixed(1);
+            document.getElementById('erp-latency').innerText = (erp.p95_latency * 1000).toFixed(0) + "ms";
+            
+            // Format Error Rate (Percentage)
+            const errPct = (erp.error_rate * 100).toFixed(2) + "%";
+            document.getElementById('erp-errors').innerText = errPct;
+
+            // Dynamic Badge Color
+            const erpBadge = document.getElementById('badge-erp');
+            if (erp.error_rate > 0.05) { // > 5% errors
+                erpBadge.className = "badge rounded-pill bg-danger";
+                erpBadge.innerText = "Critical";
+            } else if (erp.error_rate > 0.01) { // > 1% errors
+                erpBadge.className = "badge rounded-pill bg-warning text-dark";
+                erpBadge.innerText = "Degraded";
+            } else {
+                erpBadge.className = "badge rounded-pill";
+                erpBadge.style.backgroundColor = "var(--accent)"; // SmartOps Blue
+                erpBadge.innerText = "Healthy";
+            }
+            
+            // Initialize simple chart using charts.js helper
+            // Note: In a real app, you'd fetch history array, here we mock a line for visual
+            renderAnomalyChart('chart-erp-latency', 
+                ['Now-5m', 'Now-4m', 'Now-3m', 'Now-2m', 'Now-1m', 'Now'],
+                [0.1, 0.12, 0.11, 0.13, 0.12, erp.p95_latency]
+            );
+        });
+</script>
+{% endblock %}

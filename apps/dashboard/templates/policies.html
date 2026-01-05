@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Policy Engine Audit{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card shadow-sm text-center py-3">
+            <h3 class="text-success fw-bold" id="stat-allowed">--</h3>
+            <span class="text-muted">Allowed Actions</span>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card shadow-sm text-center py-3">
+            <h3 class="text-danger fw-bold" id="stat-blocked">--</h3>
+            <span class="text-muted">Blocked Actions</span>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card shadow-sm h-100 px-3 d-flex justify-content-center">
+            <span class="text-muted">Most Triggered Guardrail:</span>
+            <strong class="text-primary" id="top-guardrail">Loading...</strong>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                Decision Audit Log
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Time</th>
+                                <th>Policy ID</th>
+                                <th>Decision</th>
+                                <th>Reason</th>
+                                <th>Guardrails Checked</th>
+                            </tr>
+                        </thead>
+                        <tbody id="policy-table-body">
+                            <tr><td colspan="5" class="text-center py-4 text-muted">Loading audit logs...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    fetch('/api/policies')
+    .then(response => response.json())
+    .then(data => {
+        const tbody = document.getElementById('policy-table-body');
+        tbody.innerHTML = '';
+
+        let allowed = 0;
+        let blocked = 0;
+        const guardrailCounts = {};
+
+        data.decisions.forEach(d => {
+            // Update Stats
+            if(d.decision === 'allow') allowed++;
+            else blocked++;
+
+            // Count Guardrails
+            d.guardrails.forEach(g => {
+                if(g.triggered) {
+                    guardrailCounts[g.name] = (guardrailCounts[g.name] || 0) + 1;
+                }
+            });
+
+            // Render Row
+            const tr = document.createElement('tr');
+            const dateStr = new Date(d.ts * 1000).toLocaleString();
+            const badgeClass = d.decision === 'allow' ? 'bg-success' : 'bg-danger';
+            
+            // Format guardrails
+            const railsHtml = d.guardrails.map(g => 
+                `<span class="badge ${g.triggered ? 'bg-warning text-dark' : 'bg-light text-muted border'} me-1">${g.name}</span>`
+            ).join('');
+
+            tr.innerHTML = `
+                <td class="small text-muted">${dateStr}</td>
+                <td class="fw-bold text-primary">${d.policy_id}</td>
+                <td><span class="badge ${badgeClass} rounded-pill text-uppercase">${d.decision}</span></td>
+                <td>${d.reason}</td>
+                <td>${railsHtml}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        // Update Stats UI
+        document.getElementById('stat-allowed').innerText = allowed;
+        document.getElementById('stat-blocked').innerText = blocked;
+        
+        // Find top guardrail
+        const top = Object.keys(guardrailCounts).reduce((a, b) => guardrailCounts[a] > guardrailCounts[b] ? a : b, "None");
+        document.getElementById('top-guardrail').innerText = top;
+    })
+    .catch(err => {
+        console.error(err);
+        document.getElementById('policy-table-body').innerHTML = '<tr><td colspan="5" class="text-center text-danger">Failed to load policy data. (Ensure /api/policies endpoint exists)</td></tr>';
+    });
+</script>
+{% endblock %}

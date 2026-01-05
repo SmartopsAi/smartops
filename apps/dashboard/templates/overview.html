@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}System Overview{% endblock %}
+
+{% block content %}
+<div class="row g-3 my-2">
+    <div class="col-md-3">
+        <div class="p-3 bg-white shadow-sm d-flex justify-content-around align-items-center rounded card-kpi">
+            <div>
+                <h3 class="fs-2" id="kpi-system-status">...</h3>
+                <p class="fs-5 text-muted">System Status</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="p-3 bg-white shadow-sm d-flex justify-content-around align-items-center rounded card-kpi">
+            <div>
+                <h3 class="fs-2" id="kpi-anomaly-score">...</h3>
+                <p class="fs-5 text-muted">Latest Anomaly Score</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="p-3 bg-white shadow-sm d-flex justify-content-around align-items-center rounded card-kpi">
+            <div>
+                <h3 class="fs-2" id="kpi-policy-decisions">...</h3>
+                <p class="fs-5 text-muted">Recent Blocked Actions</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="incident-banner" class="alert alert-danger mt-4 d-none" role="alert">
+    <h4 class="alert-heading">Active Incident Detected!</h4>
+    <p>
+        <strong>Type:</strong> <span id="incident-type"></span> | 
+        <strong>Time:</strong> <span id="incident-time"></span>
+    </p>
+    <hr>
+    <p class="mb-0">
+        Root Cause Analysis is available. <a href="/rca" class="fw-bold">View RCA Report →</a>
+    </p>
+</div>
+
+<div class="row my-5">
+    <div class="col-md-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                Recent Anomaly Trend
+            </div>
+            <div class="card-body">
+                <canvas id="chart-overview-anomaly"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                Policy Audit Stream
+            </div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush" id="audit-list">
+                    <li class="list-group-item text-muted">Loading...</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Fetch data from our internal API
+    fetch('/api/overview')
+    .then(response => response.json())
+    .then(data => {
+        // 1. Update KPI Tiles
+        document.getElementById('kpi-system-status').innerText = data.system_status;
+        
+        // 2. Handle Anomaly Data
+        if (data.latest_anomaly) {
+            const score = data.latest_anomaly.score.toFixed(2);
+            document.getElementById('kpi-anomaly-score').innerText = score;
+            
+            // Show incident banner if score is high
+            if (score > 0.5) {
+                const banner = document.getElementById('incident-banner');
+                banner.classList.remove('d-none');
+                document.getElementById('incident-type').innerText = data.latest_anomaly.anomaly_type;
+                document.getElementById('incident-time').innerText = new Date(data.latest_anomaly.ts * 1000).toLocaleString();
+            }
+        } else {
+            document.getElementById('kpi-anomaly-score').innerText = "0.0";
+        }
+
+        // 3. Populate Policy Audit List
+        const list = document.getElementById('audit-list');
+        list.innerHTML = ''; // Clear loading
+        data.recent_decisions.forEach(d => {
+            const li = document.createElement('li');
+            li.className = 'list-group-item d-flex justify-content-between align-items-center';
+            // Badge color based on decision
+            const badgeClass = d.decision === 'allow' ? 'bg-success' : 'bg-danger';
+            li.innerHTML = `
+                ${d.policy_id}
+                <span class="badge ${badgeClass} rounded-pill">${d.decision}</span>
+            `;
+            list.appendChild(li);
+        });
+    });
+</script>
+{% endblock %}

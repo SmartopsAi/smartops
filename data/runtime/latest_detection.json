@@ -1,10 +1,1 @@
-{
-  "timestamp": 1767350449.232708,
-  "anomaly": false,
-  "statistical": true,
-  "isolation_forest": false,
-  "ground_truth": "NORMAL",
-  "recovering": false,
-  "recovery_windows": 0,
-  "required_recovery_windows": 3
-}
+{"timestamp": 1767607705.8735607, "service": "erp-simulator", "anomaly_score": 0.85, "type": "cpu_spike", "model_version": "isolation_forest_v1", "window_id": "w-1024"}

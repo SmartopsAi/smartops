@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}Orchestrator Actions{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-5">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                Manual Trigger
+            </div>
+            <div class="card-body">
+                <form id="actionForm">
+                    <div class="mb-3">
+                        <label class="form-label">Action Type</label>
+                        <select class="form-select" id="actionType" onchange="toggleReplicas()">
+                            <option value="scale">Scale Deployment</option>
+                            <option value="restart">Restart Deployment</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Namespace</label>
+                        <input type="text" class="form-control" id="targetNamespace" value="smartops-dev">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Deployment Name</label>
+                        <input type="text" class="form-control" id="targetName" placeholder="e.g., erp-simulator">
+                    </div>
+
+                    <div class="mb-3" id="replicasField">
+                        <label class="form-label">Target Replicas</label>
+                        <input type="number" class="form-control" id="targetReplicas" value="3" min="0" max="10">
+                        <div class="form-text">Guardrail: Max 10 replicas allowed.</div>
+                    </div>
+
+                    <hr>
+
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="dryRun" checked>
+                        <label class="form-check-label" for="dryRun">Dry Run (Simulate only)</label>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="policyCheck" checked disabled>
+                        <label class="form-check-label" for="policyCheck">Require Policy Check (Enforced)</label>
+                    </div>
+
+                    <button type="button" class="btn text-white w-100" style="background-color: var(--primary-mid);" onclick="submitAction()">
+                        Execute Action
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mt-3 d-none" id="resultCard">
+            <div class="card-header bg-white">Execution Result</div>
+            <div class="card-body bg-light font-monospace small" id="resultOutput">
+                Waiting for response...
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-7">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <span>Recent Actions</span>
+                <span class="badge bg-secondary">Live</span>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Time</th>
+                            <th>Type</th>
+                            <th>Target</th>
+                            <th>Status</th>
+                            <th>Verification</th>
+                        </tr>
+                    </thead>
+                    <tbody id="actionsTableBody">
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-4">No recent actions found.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Toggle Replicas Field visibility based on Action Type
+    function toggleReplicas() {
+        const type = document.getElementById('actionType').value;
+        const field = document.getElementById('replicasField');
+        field.style.display = (type === 'scale') ? 'block' : 'none';
+    }
+
+    // Handle Form Submission
+    async function submitAction() {
+        const btn = document.querySelector('button');
+        const output = document.getElementById('resultOutput');
+        const card = document.getElementById('resultCard');
+        
+        // UI Feedback
+        btn.disabled = true;
+        btn.innerText = "Processing...";
+        card.classList.remove('d-none');
+        output.innerText = "Sending request to Orchestrator...";
+
+        // Gather Data
+        const payload = {
+            action: document.getElementById('actionType').value,
+            namespace: document.getElementById('targetNamespace').value,
+            name: document.getElementById('targetName').value,
+            replicas: parseInt(document.getElementById('targetReplicas').value),
+            dry_run: document.getElementById('dryRun').checked
+        };
+
+        try {
+            const response = await fetch('/api/actions/trigger', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            
+            // Display Pretty JSON Result
+            output.innerText = JSON.stringify(data, null, 2);
+            
+            if (data.status === 'success') {
+                output.className = "card-body bg-success bg-opacity-10 text-success font-monospace small";
+            } else {
+                output.className = "card-body bg-danger bg-opacity-10 text-danger font-monospace small";
+            }
+
+        } catch (error) {
+            output.innerText = "Error: " + error.message;
+        } finally {
+            btn.disabled = false;
+            btn.innerText = "Execute Action";
+        }
+    }
+</script>
+{% endblock %}
