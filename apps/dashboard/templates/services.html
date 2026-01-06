@@ -3,147 +3,206 @@
 {% block title %}Service Status{% endblock %}
 
 {% block content %}
+
+<!-- ======================================================
+   CORE SERVICES
+   ====================================================== -->
 <div class="row g-4">
-    <div class="col-md-6">
-        <div class="card shadow-sm h-100">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <span class="fs-5">ERP Simulator</span>
-                <span id="badge-erp" class="badge rounded-pill" style="background-color: var(--accent);">
-                    Checking...
+
+    <!-- ================= ERP SIMULATOR ================= -->
+    <div class="col-xl-6 col-md-12">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-2">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <rect x="3" y="3" width="18" height="18" rx="3"
+                              stroke="currentColor" stroke-width="2"/>
+                        <path d="M3 9h18M9 21V9" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                    <span class="fw-semibold">ERP Simulator</span>
+                </div>
+
+                <span id="badge-erp" class="badge rounded-pill">
+                    Checking…
                 </span>
             </div>
+
             <div class="card-body">
+
+                <!-- KPIs -->
                 <div class="row text-center mb-4">
                     <div class="col-4 border-end">
-                        <h4 id="erp-rps" class="text-primary fw-bold">...</h4>
-                        <small class="text-muted">RPS</small>
+                        <div class="fw-semibold fs-5" id="erp-rps">…</div>
+                        <div class="small text-muted">Replicas / RPS</div>
                     </div>
                     <div class="col-4 border-end">
-                        <h4 id="erp-latency" class="text-primary fw-bold">...</h4>
-                        <small class="text-muted">P95 Latency</small>
+                        <div class="fw-semibold fs-5" id="erp-latency">…</div>
+                        <div class="small text-muted">P95 Latency</div>
                     </div>
                     <div class="col-4">
-                        <h4 id="erp-errors" class="text-danger fw-bold">...</h4>
-                        <small class="text-muted">Error Rate</small>
+                        <div class="fw-semibold fs-5 text-danger" id="erp-errors">…</div>
+                        <div class="small text-muted">Error Rate</div>
                     </div>
                 </div>
-                <canvas id="chart-erp-latency" height="100"></canvas>
+
+                <!-- Latency Chart -->
+                <canvas id="chart-erp-latency" height="110"></canvas>
+
             </div>
-            <div class="card-footer bg-light text-end">
-                <a href="/telemetry" class="btn btn-sm btn-outline-primary">View Traces</a>
+
+            <div class="card-footer bg-transparent text-end">
+                <a href="/telemetry" class="btn btn-sm btn-outline-primary">
+                    View Traces
+                </a>
             </div>
         </div>
     </div>
 
-    <div class="col-md-6">
-        <div class="card shadow-sm h-100">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <span class="fs-5">SmartOps Orchestrator</span>
-                <span id="badge-orch" class="badge rounded-pill" style="background-color: var(--accent);">
-                    Checking...
+    <!-- ================= ORCHESTRATOR ================= -->
+    <div class="col-xl-6 col-md-12">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-2">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="9"
+                                stroke="currentColor" stroke-width="2"/>
+                        <path d="M12 7v10M7 12h10"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                    <span class="fw-semibold">SmartOps Orchestrator</span>
+                </div>
+
+                <span id="badge-orch" class="badge rounded-pill">
+                    Checking…
                 </span>
             </div>
+
             <div class="card-body">
+
+                <!-- KPIs -->
                 <div class="row text-center mb-4">
                     <div class="col-4 border-end">
-                        <h4 id="orch-rps" class="text-primary fw-bold">...</h4>
-                        <small class="text-muted">Action Tput</small>
+                        <div class="fw-semibold fs-5" id="orch-rps">…</div>
+                        <div class="small text-muted">Action Throughput</div>
                     </div>
                     <div class="col-4 border-end">
-                        <h4 id="orch-latency" class="text-primary fw-bold">...</h4>
-                        <small class="text-muted">Avg Duration</small>
+                        <div class="fw-semibold fs-5" id="orch-latency">…</div>
+                        <div class="small text-muted">Avg Duration</div>
                     </div>
                     <div class="col-4">
-                        <h4 id="orch-status" class="text-success fw-bold">OK</h4>
-                        <small class="text-muted">API Health</small>
+                        <div class="fw-semibold fs-5 text-success" id="orch-status">OK</div>
+                        <div class="small text-muted">API Health</div>
                     </div>
                 </div>
-                <div class="alert alert-info py-2 small">
-                    <i class="bi bi-info-circle"></i> 
-                    Responsible for executing scaling & restart actions.
+
+                <!-- Description -->
+                <div class="alert alert-info border-0 small mb-0">
+                    Executes safe recovery actions (scale, restart, patch)
+                    based on policy decisions and RCA context.
                 </div>
+
             </div>
         </div>
     </div>
+
 </div>
 
+<!-- ======================================================
+   AGENT SUBSYSTEMS
+   ====================================================== -->
 <div class="row mt-4">
     <div class="col-12">
-        <div class="card shadow-sm">
-            <div class="card-header bg-white">Agent Subsystems</div>
+        <div class="card">
+            <div class="card-header">
+                Agent Subsystems
+            </div>
+
             <div class="card-body p-0">
                 <table class="table table-hover mb-0">
-                    <thead class="table-light">
+                    <thead>
                         <tr>
                             <th>Service</th>
                             <th>Role</th>
                             <th>Status</th>
-                            <th>Last Update</th>
+                            <th>Update Mode</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td>Agent-Detect</td>
-                            <td>Anomaly Detection</td>
-                            <td><span class="badge bg-success">Active</span></td>
-                            <td>Real-time</td>
-                        </tr>
-                        <tr>
                             <td>Agent-Diagnose</td>
                             <td>Root Cause Analysis</td>
-                            <td><span class="badge bg-success">Active</span></td>
+                            <td><span class="badge badge-success">Active</span></td>
                             <td>Event-driven</td>
                         </tr>
                         <tr>
                             <td>Policy Engine</td>
-                            <td>Guardrails</td>
-                            <td><span class="badge bg-success">Active</span></td>
-                            <td>Sync</td>
+                            <td>Guardrails & Decisions</td>
+                            <td><span class="badge badge-success">Active</span></td>
+                            <td>Synchronous</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
+
+            <div class="card-footer small text-muted">
+                Static wiring — live runtime registration pending
+            </div>
         </div>
     </div>
 </div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
-    // Fetch Metrics from API
-    fetch('/api/services/metrics')
-        .then(response => response.json())
-        .then(data => {
-            const erp = data.erp;
-            
-            // Update ERP Stats
-            document.getElementById('erp-rps').innerText = erp.rps.toFixed(1);
-            document.getElementById('erp-latency').innerText = (erp.p95_latency * 1000).toFixed(0) + "ms";
-            
-            // Format Error Rate (Percentage)
-            const errPct = (erp.error_rate * 100).toFixed(2) + "%";
-            document.getElementById('erp-errors').innerText = errPct;
+fetch('/api/services/metrics')
+  .then(res => res.json())
+  .then(data => {
+    console.log("Services metrics:", data);
 
-            // Dynamic Badge Color
-            const erpBadge = document.getElementById('badge-erp');
-            if (erp.error_rate > 0.05) { // > 5% errors
-                erpBadge.className = "badge rounded-pill bg-danger";
-                erpBadge.innerText = "Critical";
-            } else if (erp.error_rate > 0.01) { // > 1% errors
-                erpBadge.className = "badge rounded-pill bg-warning text-dark";
-                erpBadge.innerText = "Degraded";
-            } else {
-                erpBadge.className = "badge rounded-pill";
-                erpBadge.style.backgroundColor = "var(--accent)"; // SmartOps Blue
-                erpBadge.innerText = "Healthy";
-            }
-            
-            // Initialize simple chart using charts.js helper
-            // Note: In a real app, you'd fetch history array, here we mock a line for visual
-            renderAnomalyChart('chart-erp-latency', 
-                ['Now-5m', 'Now-4m', 'Now-3m', 'Now-2m', 'Now-1m', 'Now'],
-                [0.1, 0.12, 0.11, 0.13, 0.12, erp.p95_latency]
-            );
-        });
+    /* ================= ERP ================= */
+    const erp = data.erp || {};
+    const erpP95ms = erp.p95_latency_ms ?? 0;
+
+    document.getElementById('erp-rps').innerText =
+      erp.replicas_available ?? 0;
+
+    document.getElementById('erp-latency').innerText =
+      erpP95ms ? `${erpP95ms} ms` : "N/A";
+
+    document.getElementById('erp-errors').innerText =
+      "0.00%";
+
+    const erpBadge = document.getElementById('badge-erp');
+    erpBadge.innerText = erp.status === "healthy" ? "Healthy" : "Degraded";
+    erpBadge.className =
+      erp.status === "healthy"
+        ? "badge rounded-pill bg-success"
+        : "badge rounded-pill bg-warning text-dark";
+
+    /* ================= ORCHESTRATOR ================= */
+    const orch = data.orchestrator || {};
+
+    document.getElementById('orch-rps').innerText =
+      orch.replicas_available ?? 0;
+
+    document.getElementById('orch-latency').innerText =
+      orch.p95_latency_ms ? `${orch.p95_latency_ms} ms` : "N/A";
+
+    document.getElementById('orch-status').innerText =
+      orch.status === "healthy" ? "OK" : "Degraded";
+
+    const orchBadge = document.getElementById('badge-orch');
+    orchBadge.innerText =
+      orch.status === "healthy" ? "Healthy" : "Degraded";
+
+    orchBadge.className =
+      orch.status === "healthy"
+        ? "badge rounded-pill bg-success"
+        : "badge rounded-pill bg-warning text-dark";
+  })
+  .catch(err => {
+    console.error("Services metrics fetch failed:", err);
+  });
 </script>
 {% endblock %}

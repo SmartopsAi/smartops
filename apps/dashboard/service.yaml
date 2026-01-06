@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: smartops-dashboard
+  namespace: smartops-dev
+  labels:
+    app: smartops-dashboard
+spec:
+  type: ClusterIP
+  selector:
+    app: smartops-dashboard
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5050

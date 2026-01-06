@@ -3,72 +3,147 @@
 {% block title %}Orchestrator Actions{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-md-5">
-        <div class="card shadow-sm">
-            <div class="card-header bg-white">
+
+<div class="row g-4">
+
+    <!-- ======================================================
+         ACTION EXECUTION PANEL
+         ====================================================== -->
+    <div class="col-lg-5">
+        <div class="card">
+
+            <div class="card-header d-flex align-items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z"
+                          stroke="currentColor" stroke-width="2"/>
+                </svg>
                 Manual Trigger
             </div>
+
             <div class="card-body">
                 <form id="actionForm">
+
+                    <!-- Action Type -->
                     <div class="mb-3">
                         <label class="form-label">Action Type</label>
-                        <select class="form-select" id="actionType" onchange="toggleReplicas()">
+                        <select class="form-select"
+                                id="actionType"
+                                onchange="toggleReplicas()">
                             <option value="scale">Scale Deployment</option>
                             <option value="restart">Restart Deployment</option>
                         </select>
                     </div>
 
+                    <!-- Namespace -->
                     <div class="mb-3">
                         <label class="form-label">Namespace</label>
-                        <input type="text" class="form-control" id="targetNamespace" value="smartops-dev">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Deployment Name</label>
-                        <input type="text" class="form-control" id="targetName" placeholder="e.g., erp-simulator">
+                        <input type="text"
+                               class="form-control"
+                               id="targetNamespace"
+                               value="smartops-dev">
                     </div>
 
+                    <!-- Deployment -->
+                    <div class="mb-3">
+                        <label class="form-label">Deployment Name</label>
+                        <input type="text"
+                               class="form-control"
+                               id="targetName"
+                               placeholder="e.g., erp-simulator">
+                    </div>
+
+                    <!-- Replicas -->
                     <div class="mb-3" id="replicasField">
                         <label class="form-label">Target Replicas</label>
-                        <input type="number" class="form-control" id="targetReplicas" value="3" min="0" max="10">
-                        <div class="form-text">Guardrail: Max 10 replicas allowed.</div>
+                        <input type="number"
+                               class="form-control"
+                               id="targetReplicas"
+                               value="3"
+                               min="0"
+                               max="10">
+                        <div class="form-text">
+                            Guardrail enforced: maximum 10 replicas.
+                        </div>
                     </div>
 
                     <hr>
 
+                    <!-- Safety Switches -->
                     <div class="form-check form-switch mb-2">
-                        <input class="form-check-input" type="checkbox" id="dryRun" checked>
-                        <label class="form-check-label" for="dryRun">Dry Run (Simulate only)</label>
-                    </div>
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="policyCheck" checked disabled>
-                        <label class="form-check-label" for="policyCheck">Require Policy Check (Enforced)</label>
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="dryRun"
+                               checked>
+                        <label class="form-check-label" for="dryRun">
+                            Dry Run (simulate only)
+                        </label>
                     </div>
 
-                    <button type="button" class="btn text-white w-100" style="background-color: var(--primary-mid);" onclick="submitAction()">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="policyCheck"
+                               checked
+                               disabled>
+                        <label class="form-check-label" for="policyCheck">
+                            Policy Check Required (enforced)
+                        </label>
+                    </div>
+
+                    <!-- Execute -->
+                    <button type="button"
+                            class="btn btn-primary w-100"
+                            onclick="submitAction()">
                         Execute Action
                     </button>
+
                 </form>
             </div>
         </div>
 
-        <div class="card shadow-sm mt-3 d-none" id="resultCard">
-            <div class="card-header bg-white">Execution Result</div>
-            <div class="card-body bg-light font-monospace small" id="resultOutput">
-                Waiting for response...
+        <!-- ======================================================
+             EXECUTION RESULT
+             ====================================================== -->
+        <div class="card mt-3 d-none" id="resultCard">
+            <div class="card-header d-flex align-items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 4h16v16H4z"
+                          stroke="currentColor" stroke-width="2"/>
+                    <path d="M8 12h8"
+                          stroke="currentColor" stroke-width="2"/>
+                </svg>
+                Execution Result
+            </div>
+            <div class="card-body bg-light font-monospace small"
+                 id="resultOutput">
+                Waiting for response…
             </div>
         </div>
+
     </div>
 
-    <div class="col-md-7">
-        <div class="card shadow-sm h-100">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <span>Recent Actions</span>
+    <!-- ======================================================
+         ACTION HISTORY
+         ====================================================== -->
+    <div class="col-lg-7">
+        <div class="card h-100">
+
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-2">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path d="M3 12h18"
+                              stroke="currentColor" stroke-width="2"/>
+                        <path d="M12 3v18"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                    Recent Actions
+                </div>
                 <span class="badge bg-secondary">Live</span>
             </div>
+
             <div class="card-body p-0">
                 <table class="table table-hover mb-0">
-                    <thead class="table-light">
+                    <thead>
                         <tr>
                             <th>Time</th>
                             <th>Type</th>
@@ -79,14 +154,22 @@
                     </thead>
                     <tbody id="actionsTableBody">
                         <tr>
-                            <td colspan="5" class="text-center text-muted py-4">No recent actions found.</td>
+                            <td colspan="5"
+                                class="text-center text-muted py-4">
+                                Actions execute in real time.
+                                Full audit is available under
+                                Policies & Verification.
+                            </td>
                         </tr>
                     </tbody>
                 </table>
             </div>
+
         </div>
     </div>
+
 </div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -103,14 +186,12 @@
         const btn = document.querySelector('button');
         const output = document.getElementById('resultOutput');
         const card = document.getElementById('resultCard');
-        
-        // UI Feedback
-        btn.disabled = true;
-        btn.innerText = "Processing...";
-        card.classList.remove('d-none');
-        output.innerText = "Sending request to Orchestrator...";
 
-        // Gather Data
+        btn.disabled = true;
+        btn.innerText = "Processing…";
+        card.classList.remove('d-none');
+        output.innerText = "Sending request to Orchestrator…";
+
         const payload = {
             action: document.getElementById('actionType').value,
             namespace: document.getElementById('targetNamespace').value,
@@ -125,15 +206,24 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            const data = await response.json();
-            
-            // Display Pretty JSON Result
-            output.innerText = JSON.stringify(data, null, 2);
-            
-            if (data.status === 'success') {
-                output.className = "card-body bg-success bg-opacity-10 text-success font-monospace small";
+
+            let data;
+            const contentType = response.headers.get("content-type");
+
+            if (contentType && contentType.includes("application/json")) {
+                data = await response.json();
             } else {
-                output.className = "card-body bg-danger bg-opacity-10 text-danger font-monospace small";
+                throw new Error("Server returned non-JSON response");
+            }
+
+            output.innerText = JSON.stringify(data, null, 2);
+
+            if (data.status === 'success') {
+                output.className =
+                    "card-body bg-success bg-opacity-10 text-success font-monospace small";
+            } else {
+                output.className =
+                    "card-body bg-danger bg-opacity-10 text-danger font-monospace small";
             }
 
         } catch (error) {

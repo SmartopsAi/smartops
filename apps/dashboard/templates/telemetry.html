@@ -4,48 +4,209 @@
 
 {% block content %}
 <div class="row g-4">
-    <div class="col-md-6">
-        <div class="card shadow-sm h-100">
-            <div class="card-body text-center p-5">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/a/a1/Grafana_logo.svg" alt="Grafana" width="64" class="mb-3">
-                <h3 class="card-title">Grafana Dashboards</h3>
-                <p class="card-text text-muted">Deep dive into system metrics, node health, and historical trends.</p>
-                <a href="http://localhost:3000" target="_blank" class="btn btn-outline-primary mt-2">
-                    Open Grafana &nearr;
-                </a>
-            </div>
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">ERP Simulator</span>
+        <span id="erp-badge" class="badge rounded-pill bg-secondary">Loading</span>
+      </div>
+      <div class="card-body">
+        <div class="d-flex justify-content-between mb-2">
+          <span class="text-muted">Replicas</span>
+          <span class="fw-bold"><span id="erp-ready">--</span>/<span id="erp-desired">--</span></span>
         </div>
-    </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span class="text-muted">Available</span>
+          <span class="fw-bold" id="erp-available">--</span>
+        </div>
+        <div class="d-flex justify-content-between">
+          <span class="text-muted">P95 Latency</span>
+          <span class="fw-bold" id="erp-latency">N/A</span>
+        </div>
 
-    <div class="col-md-6">
-        <div class="card shadow-sm h-100">
-            <div class="card-body text-center p-5">
-                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="#4988C4" class="bi bi-hdd-network mb-3" viewBox="0 0 16 16">
-                    <path d="M4.5 5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1zM3 4.5a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0z"/>
-                    <path d="M0 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2H8.5v3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 2 14v-3a1.5 1.5 0 0 1 1.5-1.5v-3H2a2 2 0 0 1-2-2V4zm2-1a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H2zm1.5 9a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h5a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5h-5z"/>
-                </svg>
-                <h3 class="card-title">Distributed Tracing</h3>
-                <p class="card-text text-muted">Visualize request flows across microservices using Tempo.</p>
-                <a href="http://localhost:3000/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Tempo%22,%7B%7D%5D" target="_blank" class="btn btn-outline-primary mt-2">
-                    Open Tempo Explore &nearr;
-                </a>
-            </div>
+        <div class="small text-muted mt-3">
+          Source: <span id="erp-source">--</span>
         </div>
+      </div>
     </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Orchestrator</span>
+        <span id="orch-badge" class="badge rounded-pill bg-secondary">Loading</span>
+      </div>
+      <div class="card-body">
+        <div class="d-flex justify-content-between mb-2">
+          <span class="text-muted">Replicas</span>
+          <span class="fw-bold"><span id="orch-ready">--</span>/<span id="orch-desired">--</span></span>
+        </div>
+        <div class="d-flex justify-content-between mb-2">
+          <span class="text-muted">Available</span>
+          <span class="fw-bold" id="orch-available">--</span>
+        </div>
+        <div class="small text-muted mt-3">
+          Source: <span id="orch-source">--</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-white">Observability Links</div>
+      <div class="card-body">
+        <div class="d-grid gap-2">
+          <a class="btn btn-outline-primary" href="http://localhost:3000" target="_blank">
+            Open Grafana ↗
+          </a>
+          <a class="btn btn-outline-primary" href="http://localhost:3000/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Tempo%22,%7B%7D%5D" target="_blank">
+            Open Tempo Explore ↗
+          </a>
+        </div>
+
+        <hr>
+
+        <div class="small text-muted">
+          Mode: <span class="fw-semibold">{{ mode }}</span><br/>
+          Prometheus: <span id="prom-url" class="fw-semibold">--</span><br/>
+          Last updated: <span id="last-updated" class="fw-semibold">--</span>
+        </div>
+
+        {% if mode == 'local' %}
+        <div class="alert alert-warning small mt-3 mb-0">
+          <i class="bi bi-exclamation-triangle"></i>
+          Local Mode: metrics may be dummy unless Prometheus is reachable (port-forward).
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="row mt-4">
-    <div class="col-12">
-        <div class="card shadow-sm">
-            <div class="card-header bg-white">Prometheus Status</div>
-            <div class="card-body">
-                <p><strong>Endpoint:</strong> <code class="text-primary">{{ 'http://prometheus-server' if mode == 'k8s' else 'Not Configured (Local)' }}</code></p>
-                <div class="alert alert-warning small">
-                    <i class="bi bi-exclamation-triangle"></i> 
-                    In Local Mode, telemetry links may not work unless you have local instances of Grafana/Tempo running on default ports.
-                </div>
-            </div>
+  <div class="col-12">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <span>Live Trend</span>
+        <span class="badge bg-secondary">Auto-refresh (5s)</span>
+      </div>
+      <div class="card-body">
+        <canvas id="telemetryChart" height="90"></canvas>
+        <div class="small text-muted mt-2">
+          Shows desired vs ready replicas (and latency if available).
         </div>
+      </div>
     </div>
+  </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const labels = [];
+  const readySeries = [];
+  const desiredSeries = [];
+  const latencySeries = [];
+
+  const ctx = document.getElementById("telemetryChart");
+
+  const chart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Ready Replicas (ERP)", data: readySeries, tension: 0.3 },
+        { label: "Desired Replicas (ERP)", data: desiredSeries, tension: 0.3 },
+        { label: "P95 Latency ms (ERP)", data: latencySeries, tension: 0.3, hidden: true },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: { beginAtZero: true }
+      }
+    }
+  });
+
+function badge(el, status) {
+  const s = (status || "").toLowerCase();
+
+  if (s === "healthy") {
+    el.className = "badge rounded-pill bg-success";
+    el.innerText = "Healthy";
+  } else if (s === "degraded") {
+    el.className = "badge rounded-pill bg-warning text-dark";
+    el.innerText = "Degraded";
+  } else {
+    el.className = "badge rounded-pill bg-secondary";
+    el.innerText = "Unknown";
+  }
+}
+
+  function nowLabel() {
+    const d = new Date();
+    return d.toLocaleTimeString();
+  }
+
+  async function refreshTelemetry() {
+    try {
+      const res = await fetch("/api/services/metrics");
+      const data = await res.json();
+
+      // meta
+      document.getElementById("last-updated").innerText = new Date().toLocaleString();
+      document.getElementById("prom-url").innerText = data.prometheus_url ? data.prometheus_url : "N/A";
+
+      // ERP
+      const erp = data.erp || {};
+      document.getElementById("erp-ready").innerText = erp.replicas_ready ?? "--";
+      document.getElementById("erp-desired").innerText = erp.replicas_desired ?? "--";
+      document.getElementById("erp-available").innerText = erp.replicas_available ?? "--";
+      document.getElementById("erp-source").innerText = erp.source ?? "--";
+
+      badge(document.getElementById("erp-badge"), erp.status);
+
+      const latencyMs = erp.p95_latency_ms;
+      document.getElementById("erp-latency").innerText = (latencyMs && latencyMs > 0) ? `${latencyMs} ms` : "N/A";
+
+      // Orchestrator
+      const orch = data.orchestrator || {};
+      document.getElementById("orch-ready").innerText = orch.replicas_ready ?? "--";
+      document.getElementById("orch-desired").innerText = orch.replicas_desired ?? "--";
+      document.getElementById("orch-available").innerText = orch.replicas_available ?? "--";
+      document.getElementById("orch-source").innerText = orch.source ?? "--";
+
+      badge(document.getElementById("orch-badge"), orch.status);
+
+      // Chart update (keep last 20 points)
+      labels.push(nowLabel());
+      readySeries.push(Number(erp.replicas_ready ?? 0));
+      desiredSeries.push(Number(erp.replicas_desired ?? 0));
+      latencySeries.push(Number(latencyMs ?? 0));
+
+      // Reveal latency series only if we ever get a real value
+      if (latencyMs && latencyMs > 0) {
+        chart.data.datasets[2].hidden = false;
+      }
+
+      if (labels.length > 20) {
+        labels.shift();
+        readySeries.shift();
+        desiredSeries.shift();
+        latencySeries.shift();
+      }
+
+      chart.update();
+
+    } catch (e) {
+      console.error("Telemetry refresh failed:", e);
+    }
+  }
+
+  refreshTelemetry();
+  setInterval(refreshTelemetry, 5000);
+</script>
 {% endblock %}

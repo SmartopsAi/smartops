@@ -3,67 +3,153 @@
 {% block title %}System Overview{% endblock %}
 
 {% block content %}
-<div class="row g-3 my-2">
-    <div class="col-md-3">
-        <div class="p-3 bg-white shadow-sm d-flex justify-content-around align-items-center rounded card-kpi">
-            <div>
-                <h3 class="fs-2" id="kpi-system-status">...</h3>
-                <p class="fs-5 text-muted">System Status</p>
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-md-3">
-        <div class="p-3 bg-white shadow-sm d-flex justify-content-around align-items-center rounded card-kpi">
-            <div>
-                <h3 class="fs-2" id="kpi-anomaly-score">...</h3>
-                <p class="fs-5 text-muted">Latest Anomaly Score</p>
+
+<!-- ======================================================
+   KPI GRID
+   ====================================================== -->
+<div class="row g-4 mb-4">
+
+    <!-- System Status -->
+    <div class="col-xl-3 col-md-6">
+        <div class="card card-kpi">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <div>
+                    <div class="text-muted small text-uppercase">System Status</div>
+                    <div class="fs-4 fw-semibold mt-1" id="kpi-system-status">…</div>
+                </div>
+                <div class="kpi-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+                        <path d="M12 7v5l3 3" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </div>
             </div>
         </div>
     </div>
 
-    <div class="col-md-3">
-        <div class="p-3 bg-white shadow-sm d-flex justify-content-around align-items-center rounded card-kpi">
-            <div>
-                <h3 class="fs-2" id="kpi-policy-decisions">...</h3>
-                <p class="fs-5 text-muted">Recent Blocked Actions</p>
+    <!-- Anomaly State -->
+    <div class="col-xl-3 col-md-6">
+        <div class="card card-kpi">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <div>
+                    <div class="text-muted small text-uppercase">Latest Anomaly</div>
+                    <div class="fs-4 fw-semibold mt-1" id="kpi-anomaly-score">…</div>
+                </div>
+                <div class="kpi-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2l10 18H2L12 2z" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Blocked Policies -->
+    <div class="col-xl-3 col-md-6">
+        <div class="card card-kpi">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <div>
+                    <div class="text-muted small text-uppercase">Blocked Actions</div>
+                    <div class="fs-4 fw-semibold mt-1" id="kpi-policy-decisions">…</div>
+                </div>
+                <div class="kpi-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                        <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" stroke-width="2"/>
+                        <path d="M8 12h8" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ======================================================
+   INCIDENT BANNER
+   ====================================================== -->
+<div id="incident-banner" class="alert alert-danger border-0 shadow-sm d-none" role="alert">
+    <div class="d-flex align-items-start gap-3">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+            <path d="M12 7v5" stroke="currentColor" stroke-width="2"/>
+            <circle cx="12" cy="16" r="1" fill="currentColor"/>
+        </svg>
+        <div>
+            <h5 class="mb-1">Active Incident Detected</h5>
+            <div class="small">
+                <strong>Type:</strong> <span id="incident-type"></span> |
+                <strong>Time:</strong> <span id="incident-time"></span>
+            </div>
+            <div class="mt-2">
+                RCA is available.
+                <a href="/rca" class="fw-semibold text-decoration-none">
+                    View RCA →
+                </a>
             </div>
         </div>
     </div>
 </div>
 
-<div id="incident-banner" class="alert alert-danger mt-4 d-none" role="alert">
-    <h4 class="alert-heading">Active Incident Detected!</h4>
-    <p>
-        <strong>Type:</strong> <span id="incident-type"></span> | 
-        <strong>Time:</strong> <span id="incident-time"></span>
-    </p>
-    <hr>
-    <p class="mb-0">
-        Root Cause Analysis is available. <a href="/rca" class="fw-bold">View RCA Report →</a>
-    </p>
-</div>
+<!-- ======================================================
+   MAIN ANALYTICS ROW
+   ====================================================== -->
+<div class="row g-4 mt-1">
 
-<div class="row my-5">
-    <div class="col-md-8">
-        <div class="card shadow-sm">
-            <div class="card-header bg-white">
-                Recent Anomaly Trend
+    <!-- Anomaly Chart -->
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header">
+                Recent Anomaly State
             </div>
             <div class="card-body">
-                <canvas id="chart-overview-anomaly"></canvas>
+                <canvas id="chart-overview-anomaly" height="120"></canvas>
             </div>
         </div>
     </div>
-    <div class="col-md-4">
-        <div class="card shadow-sm">
-            <div class="card-header bg-white">
-                Policy Audit Stream
+
+    <!-- Orchestrator Policy Stream -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header">
+                Orchestrator Policy Stream
             </div>
-            <div class="card-body">
+            <div class="card-body p-0">
                 <ul class="list-group list-group-flush" id="audit-list">
-                    <li class="list-group-item text-muted">Loading...</li>
+                    <li class="list-group-item text-muted small">Loading…</li>
                 </ul>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ======================================================
+   POLICY ENGINE DECISIONS TABLE
+   ====================================================== -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                Policy Engine Decisions (Recent)
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th>Time (UTC)</th>
+                            <th>Decision</th>
+                            <th>Policy</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody id="policy-table">
+                        <tr>
+                            <td colspan="4" class="text-muted text-center py-3">
+                                Loading policy decisions…
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -73,43 +159,106 @@
 
 {% block scripts %}
 <script>
-    // Fetch data from our internal API
-    fetch('/api/overview')
+/* =========================================================
+   OVERVIEW CORE DATA
+   ========================================================= */
+fetch('/api/overview')
     .then(response => response.json())
     .then(data => {
-        // 1. Update KPI Tiles
-        document.getElementById('kpi-system-status').innerText = data.system_status;
-        
-        // 2. Handle Anomaly Data
-        if (data.latest_anomaly) {
-            const score = data.latest_anomaly.score.toFixed(2);
-            document.getElementById('kpi-anomaly-score').innerText = score;
-            
-            // Show incident banner if score is high
-            if (score > 0.5) {
-                const banner = document.getElementById('incident-banner');
-                banner.classList.remove('d-none');
-                document.getElementById('incident-type').innerText = data.latest_anomaly.anomaly_type;
-                document.getElementById('incident-time').innerText = new Date(data.latest_anomaly.ts * 1000).toLocaleString();
-            }
-        } else {
-            document.getElementById('kpi-anomaly-score').innerText = "0.0";
+
+        document.getElementById('kpi-system-status').innerText =
+            data.system_status || 'UNKNOWN';
+
+        const anomaly = data.latest_anomaly;
+        document.getElementById('kpi-anomaly-score').innerText =
+            anomaly ? (anomaly.score === 1.0 ? 'ANOMALY' : 'NORMAL') : 'UNKNOWN';
+
+        if (data.system_status === 'Degraded' && anomaly) {
+            const banner = document.getElementById('incident-banner');
+            banner.classList.remove('d-none');
+
+            document.getElementById('incident-type').innerText =
+                anomaly.anomaly_type || 'unknown';
+
+            document.getElementById('incident-time').innerText =
+                new Date(anomaly.ts * 1000).toLocaleString();
         }
 
-        // 3. Populate Policy Audit List
+        const blocked = (data.recent_decisions || []).filter(
+            d => d.decision === 'block'
+        );
+        document.getElementById('kpi-policy-decisions').innerText =
+            blocked.length;
+
         const list = document.getElementById('audit-list');
-        list.innerHTML = ''; // Clear loading
-        data.recent_decisions.forEach(d => {
+        list.innerHTML = '';
+
+        (data.recent_decisions || []).forEach(d => {
             const li = document.createElement('li');
-            li.className = 'list-group-item d-flex justify-content-between align-items-center';
-            // Badge color based on decision
-            const badgeClass = d.decision === 'allow' ? 'bg-success' : 'bg-danger';
+            li.className =
+                'list-group-item d-flex justify-content-between align-items-center';
+
+            const badgeClass =
+                d.decision === 'allow' ? 'badge-success' :
+                d.decision === 'block' ? 'badge-danger' :
+                'badge-secondary';
+
             li.innerHTML = `
-                ${d.policy_id}
-                <span class="badge ${badgeClass} rounded-pill">${d.decision}</span>
+                ${d.policy_id || 'policy'}
+                <span class="badge ${badgeClass}">
+                    ${d.decision}
+                </span>
             `;
             list.appendChild(li);
         });
+
+        if (window.__overviewChartRendered !== true) {
+            window.__overviewChartRendered = true;
+
+            renderAnomalyChart(
+                'chart-overview-anomaly',
+                ['Latest'],
+                [anomaly ? anomaly.score : 0]
+            );
+        }
+    });
+
+/* =========================================================
+   POLICY ENGINE DECISIONS
+   ========================================================= */
+fetch('/api/policy/decisions')
+    .then(res => res.json())
+    .then(data => {
+        const tbody = document.getElementById('policy-table');
+        tbody.innerHTML = '';
+
+        if (!data.decisions || data.decisions.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="4" class="text-muted text-center py-3">
+                        No policy decisions recorded
+                    </td>
+                </tr>`;
+            return;
+        }
+
+        data.decisions.forEach(ev => {
+            const badge =
+                ev.decision === 'allow' ? 'badge-success' :
+                ev.decision === 'block' ? 'badge-danger' :
+                'badge-secondary';
+
+            tbody.innerHTML += `
+                <tr>
+                    <td>${ev.ts || '-'}</td>
+                    <td><span class="badge ${badge}">${ev.decision}</span></td>
+                    <td>${ev.policy_id || '-'}</td>
+                    <td>${ev.reason || '-'}</td>
+                </tr>`;
+        });
+    })
+    .catch(err => {
+        console.error("Policy decision fetch failed", err);
     });
 </script>
 {% endblock %}

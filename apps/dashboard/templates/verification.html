@@ -3,90 +3,220 @@
 {% block title %}Action Verification{% endblock %}
 
 {% block content %}
-<div class="alert alert-info shadow-sm">
-    <i class="bi bi-info-circle-fill"></i> 
-    Verification runs automatically after Orchestrator actions. Below are the results of the latest closed-loop execution.
+
+<!-- ======================================================
+   INFO BANNER
+   ====================================================== -->
+<div class="alert alert-info border-0 shadow-sm d-flex align-items-start gap-3">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="9"
+                stroke="currentColor" stroke-width="2"/>
+        <path d="M12 8v5"
+              stroke="currentColor" stroke-width="2"/>
+        <circle cx="12" cy="16" r="1" fill="currentColor"/>
+    </svg>
+    <div>
+        <div class="fw-semibold">Closed-Loop Verification</div>
+        <div class="small">
+            Verification is executed automatically by the Orchestrator after recovery actions.
+            This page reflects the <strong>latest verification outcome</strong>.
+        </div>
+    </div>
 </div>
 
-<div class="row mb-4">
-    <div class="col-md-4">
-        <div class="card shadow-sm h-100 border-success">
+<!-- ======================================================
+   VERIFICATION SUMMARY
+   ====================================================== -->
+<div class="row g-4 mb-4">
+
+    <!-- Verification Result -->
+    <div class="col-lg-4">
+        <div class="card h-100" id="verification-card">
             <div class="card-body text-center d-flex flex-column justify-content-center">
-                <h5 class="text-muted">Latest Verification Result</h5>
-                <h2 class="text-success fw-bold my-3">PASSED</h2>
-                <p class="text-muted mb-0">Execution ID: <span class="font-monospace">exec-8821</span></p>
+
+                <div class="mb-3">
+                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </div>
+
+                <div class="text-muted small text-uppercase">
+                    Latest Verification Result
+                </div>
+
+                <div id="verification-status"
+                     class="fw-bold fs-4 my-3">
+                    Loading…
+                </div>
+
+                <div class="text-muted small">
+                    Deployment:
+                    <span id="verification-target"
+                          class="font-monospace">
+                        --
+                    </span>
+                </div>
+
             </div>
         </div>
     </div>
 
-    <div class="col-md-8">
-        <div class="card shadow-sm h-100">
-            <div class="card-header bg-white">Acceptance Criteria</div>
-            <ul class="list-group list-group-flush">
-                <li class="list-group-item d-flex justify-content-between align-items-center">
-                    <span><strong>Latency Check:</strong> p95 must drop below 200ms</span>
-                    <span class="badge bg-success rounded-pill">Pass (180ms)</span>
-                </li>
-                <li class="list-group-item d-flex justify-content-between align-items-center">
-                    <span><strong>Error Rate Check:</strong> Errors must be &lt; 1%</span>
-                    <span class="badge bg-success rounded-pill">Pass (0.2%)</span>
-                </li>
-                <li class="list-group-item d-flex justify-content-between align-items-center">
-                    <span><strong>Stability:</strong> Pods must be Ready for 60s</span>
-                    <span class="badge bg-success rounded-pill">Pass</span>
+    <!-- Verification Criteria -->
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header d-flex align-items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <rect x="4" y="4" width="16" height="16" rx="3"
+                          stroke="currentColor" stroke-width="2"/>
+                    <path d="M7 9h10M7 13h8"
+                          stroke="currentColor" stroke-width="2"/>
+                </svg>
+                Verification Details
+            </div>
+
+            <ul class="list-group list-group-flush" id="criteria-list">
+                <li class="list-group-item text-muted text-center">
+                    Waiting for verification results…
                 </li>
             </ul>
         </div>
     </div>
+
 </div>
 
+<!-- ======================================================
+   REPLICA IMPACT
+   ====================================================== -->
 <div class="row">
     <div class="col-12">
-        <div class="card shadow-sm">
-            <div class="card-header bg-white">Before / After Impact</div>
+        <div class="card">
+            <div class="card-header d-flex align-items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 19V5M10 19V9M16 19V3M22 19H2"
+                          stroke="currentColor" stroke-width="2"/>
+                </svg>
+                Replica Readiness Impact
+            </div>
             <div class="card-body">
-                <canvas id="chart-verification" height="80"></canvas>
+                <canvas id="chart-verification" height="90"></canvas>
             </div>
         </div>
     </div>
 </div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
-    // Mock Data for Visualization (Replace with fetch to /api/verification in future)
-    const ctx = document.getElementById('chart-verification');
-    
-    // Create a chart showing high latency dropping after the action
-    new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: ['-5m', '-4m', '-3m', '-2m', '-1m', 'Action', '+1m', '+2m', '+3m'],
-            datasets: [
-                {
-                    label: 'Latency (ms)',
-                    data: [350, 360, 340, 380, 400, 390, 180, 175, 170], // Drop after action
-                    borderColor: '#1C4D8D',
-                    backgroundColor: 'rgba(28, 77, 141, 0.1)',
-                    fill: true,
-                    tension: 0.3,
-                    segment: {
-                        borderColor: ctx => ctx.p0DataIndex >= 5 ? '#28a745' : '#1C4D8D', // Green line after action
-                        borderDash: ctx => ctx.p0DataIndex >= 5 ? [5, 5] : undefined
+async function loadVerification() {
+    try {
+        const res = await fetch('/api/verification', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                namespace: 'smartops-dev',
+                deployment: 'erp-simulator'
+            })
+        });
+
+        const data = await res.json();
+
+        /* ================= STATUS ================= */
+        const statusEl = document.getElementById('verification-status');
+        const card = document.getElementById('verification-card');
+        const targetEl = document.getElementById('verification-target');
+
+        statusEl.innerText = data.status;
+        targetEl.innerText = `${data.deployment} (${data.namespace})`;
+
+        card.classList.remove('border-success', 'border-warning', 'border-danger');
+        statusEl.classList.remove('text-success', 'text-warning', 'text-danger');
+
+        if (data.status === 'SUCCESS') {
+            statusEl.classList.add('text-success');
+            card.classList.add('border-success');
+        } else if (data.status === 'TIMED_OUT') {
+            statusEl.classList.add('text-warning');
+            card.classList.add('border-warning');
+        } else {
+            statusEl.classList.add('text-danger');
+            card.classList.add('border-danger');
+        }
+
+        /* ================= CRITERIA ================= */
+        const list = document.getElementById('criteria-list');
+        list.innerHTML = '';
+
+        list.innerHTML += `
+            <li class="list-group-item d-flex justify-content-between">
+                <span><strong>Desired Replicas</strong></span>
+                <span class="badge bg-secondary rounded-pill">
+                    ${data.desired_replicas}
+                </span>
+            </li>
+        `;
+
+        list.innerHTML += `
+            <li class="list-group-item d-flex justify-content-between">
+                <span><strong>Ready Replicas</strong></span>
+                <span class="badge ${
+                    data.ready_replicas === data.desired_replicas
+                        ? 'bg-success'
+                        : 'bg-warning text-dark'
+                } rounded-pill">
+                    ${data.ready_replicas}
+                </span>
+            </li>
+        `;
+
+        list.innerHTML += `
+            <li class="list-group-item">
+                <strong>Verification Message</strong>
+                <div class="small text-muted mt-1">
+                    ${data.message}
+                </div>
+            </li>
+        `;
+
+        /* ================= CHART ================= */
+        const ctx = document.getElementById('chart-verification');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Desired Replicas', 'Ready Replicas'],
+                datasets: [{
+                    data: [data.desired_replicas, data.ready_replicas],
+                    backgroundColor: [
+                        '#01377d',
+                        data.ready_replicas === data.desired_replicas
+                            ? '#26b170'
+                            : '#f59e0b'
+                    ],
+                    borderRadius: 6
+                }]
+            },
+            options: {
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        precision: 0,
+                        grid: { display: false }
+                    },
+                    x: {
+                        grid: { display: false }
                     }
                 }
-            ]
-        },
-        options: {
-            plugins: {
-                annotation: {
-                    // Requires chartjs-plugin-annotation (optional, omitted for simplicity)
-                }
-            },
-            scales: {
-                y: { beginAtZero: true }
             }
-        }
-    });
+        });
+
+    } catch (err) {
+        console.error(err);
+        document.getElementById('verification-status').innerText = 'ERROR';
+    }
+}
+
+loadVerification();
 </script>
 {% endblock %}

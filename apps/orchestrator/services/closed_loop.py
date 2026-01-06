@@ -5,6 +5,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from typing import Optional, Union, Dict, Tuple, List
+from ..utils.policy_client import check_policy, PolicyDecisionType
 
 from opentelemetry import trace
 from prometheus_client import Counter, Histogram, Gauge
@@ -239,6 +240,39 @@ class ClosedLoopManager:
                 self.queue.task_done()
                 CLOSED_LOOP_QUEUE_DEPTH.set(self.queue.qsize())
 
+    def _action_request_from_policy_plan(self, plan: dict) -> ActionRequest:
+        """
+        Convert Policy Engine action_plan → ActionRequest
+        """
+        target_dict = plan["target"]
+
+        target = K8sTarget(
+            kind=target_dict["kind"],
+            namespace=target_dict["namespace"],
+            name=target_dict["name"],
+        )
+
+        if plan["type"] == "restart":
+            return ActionRequest(
+                type=ActionType.RESTART,
+                target=target,
+                dry_run=plan.get("dry_run", False),
+                verify=plan.get("verify", True),
+                reason="Policy-engine decision",
+            )
+
+        if plan["type"] == "scale":
+            return ActionRequest(
+                type=ActionType.SCALE,
+                target=target,
+                dry_run=plan.get("dry_run", False),
+                verify=plan.get("verify", True),
+                scale=ScaleParams(replicas=plan["scale"]["replicas"]),
+                reason="Policy-engine decision",
+            )
+
+        raise ValueError(f"Unknown action type from policy engine: {plan}")
+
     # ------------------------------------------------------------------
     # Core logic
     # ------------------------------------------------------------------
@@ -247,28 +281,51 @@ class ClosedLoopManager:
         with tracer.start_as_current_span("smartops.closed_loop.process_signal") as span:
             span.set_attribute("smartops.signal.kind", item.kind)
             span.set_attribute("smartops.signal.attempt", item.attempt)
+            CLOSED_LOOP_SIGNALS_TOTAL.labels(
+                kind=item.kind,
+                result="processed"
+            ).inc()
 
             # ------------------------------------------------------------------
             # 1) Map signal → ActionRequest
             # ------------------------------------------------------------------
-            if item.kind == "anomaly":
-                signal: AnomalySignal = item.signal  # type: ignore
-                span.set_attribute("smartops.signal.windowId", signal.windowId)
-                span.set_attribute("smartops.signal.service", signal.service)
-                span.set_attribute("smartops.signal.type", signal.type.value)
-                span.set_attribute("smartops.signal.score", signal.score)
-                action_req = await self._map_anomaly_to_action(signal)
-            else:
-                signal = item.signal  # type: ignore
-                span.set_attribute("smartops.signal.windowId", signal.windowId)
-                span.set_attribute("smartops.signal.service", signal.service or "")
-                span.set_attribute("smartops.signal.confidence", signal.confidence)
-                if signal.rankedCauses:
-                    primary = signal.rankedCauses[0]
-                    span.set_attribute("smartops.signal.primary_cause", primary.cause)
-                    span.set_attribute("smartops.signal.primary_svc", primary.svc)
-                    span.set_attribute("smartops.signal.primary_probability", primary.probability)
-                action_req = await self._map_rca_to_action(signal)
+            # ------------------------------------------------------------------
+            # 1) Ask Policy Engine for decision
+            # ------------------------------------------------------------------
+            try:
+                # Ask policy engine based on incoming signal
+                policy_decision = await check_policy(item.signal)
+            except Exception as exc:
+                logger.error("Policy Engine error: %s", exc)
+                span.record_exception(exc)
+                return
+
+            if policy_decision.decision != PolicyDecisionType.ALLOW:
+                logger.info(
+                    "ClosedLoopManager: policy denied execution (%s)",
+                    policy_decision.reason,
+                )
+                span.set_attribute("smartops.policy.decision", "deny")
+                span.set_attribute("smartops.policy.reason", policy_decision.reason or "")
+
+                CLOSED_LOOP_SIGNALS_TOTAL.labels(
+                    kind=item.kind,
+                    result="policy_denied"
+                ).inc()
+
+                return
+
+            if not policy_decision.action_plan:
+                logger.info("Policy allowed but no action plan returned")
+                return
+
+
+            action_req = self._action_request_from_policy_plan(
+                policy_decision.action_plan
+            )
+
+            span.set_attribute("smartops.policy.decision", "allow")
+
 
             if action_req is None:
                 logger.info("ClosedLoopManager: no remediation action derived for signal %s", item)
@@ -339,9 +396,11 @@ class ClosedLoopManager:
                     span.set_attribute("smartops.closed_loop.guardrail.blocked", True)
                     span.set_attribute("smartops.closed_loop.guardrail.reason", reason)
                     CLOSED_LOOP_GUARDRAIL_BLOCKS_TOTAL.labels(
-                        type=action_type_label,
-                        reason=reason,
+                        type=action_req.type.value,
+                        reason=reason
                     ).inc()
+
+
                     return
 
             # Scale-specific guardrails
@@ -372,9 +431,10 @@ class ClosedLoopManager:
                         span.set_attribute("smartops.closed_loop.guardrail.blocked", True)
                         span.set_attribute("smartops.closed_loop.guardrail.reason", reason)
                         CLOSED_LOOP_GUARDRAIL_BLOCKS_TOTAL.labels(
-                            type=action_type_label,
-                            reason=reason,
+                            type=action_req.type.value,
+                            reason=reason
                         ).inc()
+
                         return
 
                     # Scale rate limit within 15 minutes
@@ -400,9 +460,10 @@ class ClosedLoopManager:
                             span.set_attribute("smartops.closed_loop.guardrail.blocked", True)
                             span.set_attribute("smartops.closed_loop.guardrail.reason", reason)
                             CLOSED_LOOP_GUARDRAIL_BLOCKS_TOTAL.labels(
-                                type=action_type_label,
-                                reason=reason,
+                                type=action_req.type.value,
+                                reason=reason
                             ).inc()
+
                             return
 
                         # Record this positive scale delta into history
@@ -519,9 +580,10 @@ class ClosedLoopManager:
                     )
                     span.record_exception(exc)
                     CLOSED_LOOP_GUARDRAIL_BLOCKS_TOTAL.labels(
-                        type=action_type_label,
-                        reason=reason,
+                        type=action_req.type.value,
+                        reason=reason
                     ).inc()
+
                     CLOSED_LOOP_ACTIONS_TOTAL.labels(
                         type=action_type_label,
                         status="failed",
@@ -619,139 +681,139 @@ class ClosedLoopManager:
         )
         return None
 
-    # ----------------------------------------------------------------------
-    # Mapping logic
-    # ----------------------------------------------------------------------
+    # # ----------------------------------------------------------------------
+    # # Mapping logic
+    # # ----------------------------------------------------------------------
 
-    async def _map_anomaly_to_action(
-        self, signal: AnomalySignal
-    ) -> Optional[ActionRequest]:
-        svc = signal.service
-        ns = DEFAULT_NAMESPACE
+    # async def _map_anomaly_to_action(
+    #     self, signal: AnomalySignal
+    # ) -> Optional[ActionRequest]:
+    #     svc = signal.service
+    #     ns = DEFAULT_NAMESPACE
 
-        resolved_name = resolve_deployment_name(svc)
-        logger.debug(
-            "ClosedLoopManager: anomaly mapping service=%s resolved_name=%s",
-            svc,
-            resolved_name,
-        )
+    #     resolved_name = resolve_deployment_name(svc)
+    #     logger.debug(
+    #         "ClosedLoopManager: anomaly mapping service=%s resolved_name=%s",
+    #         svc,
+    #         resolved_name,
+    #     )
 
-        target = K8sTarget(kind="Deployment", namespace=ns, name=resolved_name)
+    #     target = K8sTarget(kind="Deployment", namespace=ns, name=resolved_name)
 
-        if signal.type == AnomalyType.RESOURCE:
-            current = self._get_current_replicas(ns, resolved_name)
-            if current is None:
-                logger.warning(
-                    "ClosedLoopManager: cannot derive current replicas for %s/%s, skipping SCALE",
-                    ns,
-                    resolved_name,
-                )
-                return None
+    #     if signal.type == AnomalyType.RESOURCE:
+    #         current = self._get_current_replicas(ns, resolved_name)
+    #         if current is None:
+    #             logger.warning(
+    #                 "ClosedLoopManager: cannot derive current replicas for %s/%s, skipping SCALE",
+    #                 ns,
+    #                 resolved_name,
+    #             )
+    #             return None
 
-            desired = current + 1
+    #         desired = current + 1
 
-            return ActionRequest(
-                type=ActionType.SCALE,
-                target=target,
-                dry_run=False,
-                scale=ScaleParams(replicas=desired),
-                reason=(
-                    f"Closed-loop: resource anomaly windowId={signal.windowId} "
-                    f"score={signal.score}"
-                ),
-                verify=True,
-            )
+    #         return ActionRequest(
+    #             type=ActionType.SCALE,
+    #             target=target,
+    #             dry_run=False,
+    #             scale=ScaleParams(replicas=desired),
+    #             reason=(
+    #                 f"Closed-loop: resource anomaly windowId={signal.windowId} "
+    #                 f"score={signal.score}"
+    #             ),
+    #             verify=True,
+    #         )
 
-        return ActionRequest(
-            type=ActionType.RESTART,
-            target=target,
-            dry_run=False,
-            reason=(
-                f"Closed-loop: {signal.type.value} anomaly "
-                f"windowId={signal.windowId} score={signal.score}"
-            ),
-            verify=True,
-        )
+    #     return ActionRequest(
+    #         type=ActionType.RESTART,
+    #         target=target,
+    #         dry_run=False,
+    #         reason=(
+    #             f"Closed-loop: {signal.type.value} anomaly "
+    #             f"windowId={signal.windowId} score={signal.score}"
+    #         ),
+    #         verify=True,
+    #     )
 
-    async def _map_rca_to_action(self, signal: RcaSignal) -> Optional[ActionRequest]:
-        if not signal.rankedCauses:
-            return None
+    # async def _map_rca_to_action(self, signal: RcaSignal) -> Optional[ActionRequest]:
+    #     if not signal.rankedCauses:
+    #         return None
 
-        primary = signal.rankedCauses[0]
-        cause = (primary.cause or "").lower()
-        svc = primary.svc or signal.service or "erp-simulator"
-        ns = DEFAULT_NAMESPACE
+    #     primary = signal.rankedCauses[0]
+    #     cause = (primary.cause or "").lower()
+    #     svc = primary.svc or signal.service or "erp-simulator"
+    #     ns = DEFAULT_NAMESPACE
 
-        resolved_name = resolve_deployment_name(svc)
-        logger.debug(
-            "ClosedLoopManager: RCA mapping service=%s resolved_name=%s cause=%s",
-            svc,
-            resolved_name,
-            cause,
-        )
+    #     resolved_name = resolve_deployment_name(svc)
+    #     logger.debug(
+    #         "ClosedLoopManager: RCA mapping service=%s resolved_name=%s cause=%s",
+    #         svc,
+    #         resolved_name,
+    #         cause,
+    #     )
 
-        target = K8sTarget(kind="Deployment", namespace=ns, name=resolved_name)
+    #     target = K8sTarget(kind="Deployment", namespace=ns, name=resolved_name)
 
-        base_reason = (
-            f"Closed-loop: RCA={cause} windowId={signal.windowId} "
-            f"confidence={signal.confidence}"
-        )
+    #     base_reason = (
+    #         f"Closed-loop: RCA={cause} windowId={signal.windowId} "
+    #         f"confidence={signal.confidence}"
+    #     )
 
-        if "memory_leak" in cause or "memory leak" in cause:
-            return ActionRequest(
-                type=ActionType.RESTART,
-                target=target,
-                dry_run=False,
-                reason=base_reason,
-                verify=True,
-            )
+    #     if "memory_leak" in cause or "memory leak" in cause:
+    #         return ActionRequest(
+    #             type=ActionType.RESTART,
+    #             target=target,
+    #             dry_run=False,
+    #             reason=base_reason,
+    #             verify=True,
+    #         )
 
-        if "cpu" in cause or "saturation" in cause:
-            current = self._get_current_replicas(ns, resolved_name)
-            if current is None:
-                logger.warning(
-                    "ClosedLoopManager: cannot derive current replicas for %s/%s, skipping SCALE",
-                    ns,
-                    resolved_name,
-                )
-                return None
+    #     if "cpu" in cause or "saturation" in cause:
+    #         current = self._get_current_replicas(ns, resolved_name)
+    #         if current is None:
+    #             logger.warning(
+    #                 "ClosedLoopManager: cannot derive current replicas for %s/%s, skipping SCALE",
+    #                 ns,
+    #                 resolved_name,
+    #             )
+    #             return None
 
-            desired = current + 1
+    #         desired = current + 1
 
-            return ActionRequest(
-                type=ActionType.SCALE,
-                target=target,
-                dry_run=False,
-                scale=ScaleParams(replicas=desired),
-                reason=base_reason,
-                verify=True,
-            )
+    #         return ActionRequest(
+    #             type=ActionType.SCALE,
+    #             target=target,
+    #             dry_run=False,
+    #             scale=ScaleParams(replicas=desired),
+    #             reason=base_reason,
+    #             verify=True,
+    #         )
 
-        if "error" in cause or "high_error" in cause or "high_error_rate" in cause:
-            return ActionRequest(
-                type=ActionType.RESTART,
-                target=target,
-                dry_run=False,
-                reason=base_reason,
-                verify=True,
-            )
+    #     if "error" in cause or "high_error" in cause or "high_error_rate" in cause:
+    #         return ActionRequest(
+    #             type=ActionType.RESTART,
+    #             target=target,
+    #             dry_run=False,
+    #             reason=base_reason,
+    #             verify=True,
+    #         )
 
-        if "config" in cause or "bad_config" in cause or "misconfig" in cause:
-            return ActionRequest(
-                type=ActionType.RESTART,
-                target=target,
-                dry_run=False,
-                reason=f"{base_reason} (placeholder: restart for now)",
-                verify=True,
-            )
+    #     if "config" in cause or "bad_config" in cause or "misconfig" in cause:
+    #         return ActionRequest(
+    #             type=ActionType.RESTART,
+    #             target=target,
+    #             dry_run=False,
+    #             reason=f"{base_reason} (placeholder: restart for now)",
+    #             verify=True,
+    #         )
 
-        return ActionRequest(
-            type=ActionType.RESTART,
-            target=target,
-            dry_run=False,
-            reason=f"{base_reason} (fallback mapping)",
-            verify=True,
-        )
+    #     return ActionRequest(
+    #         type=ActionType.RESTART,
+    #         target=target,
+    #         dry_run=False,
+    #         reason=f"{base_reason} (fallback mapping)",
+    #         verify=True,
+    #     )
 
 
 # Singleton instance used by app

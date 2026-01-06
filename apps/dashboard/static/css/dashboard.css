@@ -1,103 +1,318 @@
+/* =========================================================
+   SMARTOPS DESIGN SYSTEM
+   ========================================================= */
+
+/* ---------- Color Tokens ---------- */
 :root {
-    --primary-deep: #0F2854;
-    --primary-mid: #1C4D8D;
-    --accent: #4988C4;
-    --bg-soft: #BDE8F5;
-    --white: #FFFFFF;
-    --text-dark: #333333;
+    --yale-blue: #01377d;
+    --blue-green: #009dd1;
+    --non-photo-blue: #97e7f5;
+    --sgbus-green: #7ed348;
+    --jade: #26b170;
+
+    --bg-main: #f5fbfe;
+    --bg-card: #ffffff;
+
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+
+    --border-soft: #e2e8f0;
+    --shadow-soft: 0 6px 24px rgba(1, 55, 125, 0.08);
+    --shadow-hover: 0 10px 30px rgba(1, 55, 125, 0.16);
+
+    --radius-lg: 14px;
+    --radius-md: 10px;
+
+    --transition-fast: 0.15s ease;
+    --transition-med: 0.3s ease;
 }
 
-body {
+/* =========================================================
+   GLOBAL RESET
+   ========================================================= */
+
+* {
+    box-sizing: border-box;
+}
+
+body.smartops-body {
+    margin: 0;
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-main);
+    color: var(--text-primary);
     overflow-x: hidden;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: var(--bg-soft);
 }
 
-/* Sidebar Styling */
-#sidebar-wrapper {
+/* =========================================================
+   LAYOUT WRAPPER
+   ========================================================= */
+
+.smartops-wrapper {
     min-height: 100vh;
-    margin-left: -15rem;
-    -webkit-transition: margin .25s ease-out;
-    -moz-transition: margin .25s ease-out;
-    -o-transition: margin .25s ease-out;
-    transition: margin .25s ease-out;
-    background-color: var(--primary-deep); /* Deep Blue Sidebar */
-    width: 15rem;
+    display: flex;
 }
 
-#sidebar-wrapper .sidebar-heading {
-    padding: 0.875rem 1.25rem;
-    font-size: 1.2rem;
-    color: var(--white);
+/* =========================================================
+   SIDEBAR
+   ========================================================= */
+
+.smartops-sidebar {
+    width: 260px;
+    background: linear-gradient(
+        180deg,
+        var(--yale-blue),
+        #022f66
+    );
+    color: #ffffff;
+    display: flex;
+    flex-direction: column;
+    padding: 1.25rem 1rem;
 }
 
-#sidebar-wrapper .list-group {
-    width: 15rem;
+/* Brand */
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 0.75rem 0.75rem 1.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.12);
 }
 
-#page-content-wrapper {
-    min-width: 100vw;
-    background-color: var(--bg-soft); /* Soft Blue Background */
+.sidebar-brand svg {
+    color: var(--blue-green);
 }
 
-/* Sidebar Links */
-.list-group-item {
-    border: none;
-    padding: 20px 30px;
-    color: #cfd8dc; /* Light grey text */
+/* Navigation */
+.sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    margin-top: 1.5rem;
+    gap: 6px;
+}
+
+.sidebar-nav a {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    text-decoration: none;
+    color: rgba(255,255,255,0.82);
     font-weight: 500;
+    transition: background var(--transition-med),
+                transform var(--transition-fast),
+                color var(--transition-fast);
 }
 
-.list-group-item:hover {
-    color: var(--white);
-    background-color: var(--primary-mid) !important; /* Mid Blue on Hover */
+/* Icon slot (SVG or icon fonts later) */
+.sidebar-nav a .icon {
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
-.list-group-item.active {
-    background-color: transparent !important;
-    color: var(--accent) !important; /* Accent Blue for Active */
-    font-weight: bold;
-    border-right: 4px solid var(--accent);
+/* Hover */
+.sidebar-nav a:hover {
+    background: rgba(255,255,255,0.12);
+    color: #ffffff;
+    transform: translateX(4px);
 }
 
-/* Layout Toggling */
-#wrapper.toggled #sidebar-wrapper {
-    margin-left: 0;
+/* Active */
+.sidebar-nav a.active {
+    background: rgba(0, 157, 209, 0.22);
+    color: #ffffff;
+    box-shadow: inset 4px 0 0 var(--blue-green);
 }
 
-@media (min-width: 768px) {
-    #sidebar-wrapper {
-        margin-left: 0;
-    }
-
-    #page-content-wrapper {
-        min-width: 0;
-        width: 100%;
-    }
-
-    #wrapper.toggled #sidebar-wrapper {
-        margin-left: -15rem;
-    }
+/* Sidebar Footer */
+.sidebar-footer {
+    margin-top: auto;
+    padding: 1rem 0.75rem;
+    border-top: 1px solid rgba(255,255,255,0.12);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    color: rgba(255,255,255,0.7);
 }
 
-/* Cards & KPIs */
+.sidebar-footer strong {
+    display: block;
+    font-size: 0.85rem;
+    margin-top: 4px;
+    color: #ffffff;
+}
+
+.mode-label {
+    font-size: 0.65rem;
+    opacity: 0.7;
+}
+
+/* =========================================================
+   MAIN CONTENT
+   ========================================================= */
+
+.smartops-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* Top Bar */
+.smartops-topbar {
+    background: var(--bg-card);
+    padding: 1.25rem 2rem;
+    border-bottom: 1px solid var(--border-soft);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.page-title {
+    margin: 0;
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: var(--yale-blue);
+}
+
+/* Content Area */
+.smartops-content {
+    padding: 2rem;
+}
+
+/* =========================================================
+   CARDS
+   ========================================================= */
+
 .card {
-    border: none;
-    border-radius: 10px;
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-soft);
+    box-shadow: var(--shadow-soft);
+    transition: transform var(--transition-med),
+                box-shadow var(--transition-med);
+}
+
+.card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-hover);
 }
 
 .card-header {
-    background-color: var(--white);
-    border-bottom: 1px solid #eee;
+    background: transparent;
+    border-bottom: 1px solid var(--border-soft);
+    padding: 1rem 1.25rem;
     font-weight: 600;
-    color: var(--primary-deep);
+    color: var(--yale-blue);
 }
 
+.card-body {
+    padding: 1.25rem;
+}
+
+/* KPI Card Variant */
 .card-kpi {
-    border-left: 4px solid var(--primary-mid);
-    transition: transform 0.2s;
+    position: relative;
+    overflow: hidden;
 }
 
-.card-kpi:hover {
-    transform: translateY(-5px);
+.card-kpi::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        rgba(0,157,209,0.15),
+        transparent
+    );
+    opacity: 0;
+    transition: opacity var(--transition-med);
+}
+
+.card-kpi:hover::before {
+    opacity: 1;
+}
+
+/* =========================================================
+   TABLES
+   ========================================================= */
+
+.table {
+    --bs-table-bg: transparent;
+    color: var(--text-primary);
+}
+
+.table thead th {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-soft);
+}
+
+.table tbody tr {
+    transition: background var(--transition-fast);
+}
+
+.table tbody tr:hover {
+    background: rgba(151, 231, 245, 0.25);
+}
+
+/* =========================================================
+   BADGES / STATUS
+   ========================================================= */
+
+.badge-success {
+    background: rgba(126, 211, 72, 0.2);
+    color: var(--sgbus-green);
+}
+
+.badge-warning {
+    background: rgba(0, 157, 209, 0.2);
+    color: var(--blue-green);
+}
+
+.badge-danger {
+    background: rgba(38, 177, 112, 0.2);
+    color: var(--jade);
+}
+
+/* =========================================================
+   ANIMATIONS
+   ========================================================= */
+
+@keyframes fadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.smartops-content > * {
+    animation: fadeUp 0.4s ease both;
+}
+
+/* =========================================================
+   RESPONSIVE
+   ========================================================= */
+
+@media (max-width: 992px) {
+    .smartops-sidebar {
+        width: 220px;
+    }
+
+    .smartops-content {
+        padding: 1.5rem;
+    }
 }

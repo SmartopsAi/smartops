@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartops-dashboard
+  namespace: smartops-dev
+  labels:
+    app: smartops-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smartops-dashboard
+  template:
+    metadata:
+      labels:
+        app: smartops-dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: smartops-dashboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5050
+          env:
+            - name: DASHBOARD_PORT
+              value: "5050"

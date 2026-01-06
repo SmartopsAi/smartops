@@ -4,67 +4,183 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SmartOps Console</title>
-    
+
+    <!-- Bootstrap -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
+
+    <!-- Global Dashboard Styles -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
-    
+
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body>
 
-<div class="d-flex" id="wrapper">
-    <div class="sidebar" id="sidebar-wrapper">
-        <div class="sidebar-heading text-center py-4 primary-text fs-4 fw-bold text-uppercase border-bottom">
-            SmartOps
-        </div>
-        
-        <div class="list-group list-group-flush my-3">
-            <a href="/overview" class="list-group-item list-group-item-action bg-transparent {% if page == 'overview' %}active{% endif %}">
-                Dashboard Overview
-            </a>
-            <a href="/services" class="list-group-item list-group-item-action bg-transparent {% if page == 'services' %}active{% endif %}">
-                Services & Health
-            </a>
-            <a href="/anomalies" class="list-group-item list-group-item-action bg-transparent {% if page == 'anomalies' %}active{% endif %}">
-                Anomalies (Detect)
-            </a>
-            <a href="/rca" class="list-group-item list-group-item-action bg-transparent {% if page == 'rca' %}active{% endif %}">
-                RCA (Diagnose)
-            </a>
-            <a href="/policies" class="list-group-item list-group-item-action bg-transparent {% if page == 'policies' %}active{% endif %}">
-                Policies (Engine)
-            </a>
-            <a href="/actions" class="list-group-item list-group-item-action bg-transparent {% if page == 'actions' %}active{% endif %}">
-                Actions (Orchestrator)
-            </a>
-            <a href="/verification" class="list-group-item list-group-item-action bg-transparent {% if page == 'verification' %}active{% endif %}">
-                Verification
-            </a>
-            <a href="/telemetry" class="list-group-item list-group-item-action bg-transparent {% if page == 'telemetry' %}active{% endif %}">
-                Telemetry
-            </a>
-        </div>
-        
-        <div class="sidebar-footer p-3">
-            <small class="text-white-50">Mode: <strong>{{ mode|upper }}</strong></small>
-        </div>
-    </div>
+<body class="smartops-body">
 
-    <div id="page-content-wrapper" class="w-100 bg-soft-blue">
-        <nav class="navbar navbar-expand-lg navbar-light bg-light border-bottom px-4">
-            <h2 class="fs-4 m-0">
-                {% block title %}Operations Console{% endblock %}
-            </h2>
+<div class="d-flex smartops-wrapper">
+
+    <!-- ================= SIDEBAR ================= -->
+    <aside class="smartops-sidebar">
+
+        <!-- Brand -->
+        <div class="sidebar-brand">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L19 6V18L12 22L5 18V6L12 2Z"
+                      stroke="currentColor" stroke-width="2"/>
+            </svg>
+            <span>SmartOps</span>
+        </div>
+
+        <!-- Navigation -->
+        <nav class="sidebar-nav">
+
+            <!-- Overview -->
+            <a href="/overview" class="{% if page == 'overview' %}active{% endif %}">
+                <span class="icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path d="M3 12h7v9H3zM14 3h7v18h-7zM3 3h7v7H3z"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </span>
+                <span>Overview</span>
+            </a>
+
+            <!-- Services -->
+            <a href="/services" class="{% if page == 'services' %}active{% endif %}">
+                <span class="icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="9"
+                                stroke="currentColor" stroke-width="2"/>
+                        <path d="M12 8v4l2 2"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </span>
+                <span>Services & Health</span>
+            </a>
+
+            <!-- Anomalies -->
+            <a href="/anomalies" class="{% if page == 'anomalies' %}active{% endif %}">
+                <span class="icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2l10 18H2L12 2z"
+                              stroke="currentColor" stroke-width="2"/>
+                        <path d="M12 9v4"
+                              stroke="currentColor" stroke-width="2"/>
+                        <circle cx="12" cy="17" r="1"
+                                fill="currentColor"/>
+                    </svg>
+                </span>
+                <span>Anomalies</span>
+            </a>
+
+            <!-- RCA -->
+            <a href="/rca" class="{% if page == 'rca' %}active{% endif %}">
+                <span class="icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="9"
+                                stroke="currentColor" stroke-width="2"/>
+                        <path d="M9 9h.01M15 9h.01M10 14c.5 1 3.5 1 4 0"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </span>
+                <span>RCA</span>
+            </a>
+
+            <!-- Policies -->
+            <a href="/policies" class="{% if page == 'policies' %}active{% endif %}">
+                <span class="icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path d="M6 2h9l3 3v17H6z"
+                              stroke="currentColor" stroke-width="2"/>
+                        <path d="M9 13h6M9 17h6"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </span>
+                <span>Policies</span>
+            </a>
+
+            <!-- Actions -->
+            <a href="/actions" class="{% if page == 'actions' %}active{% endif %}">
+                <span class="icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="3"
+                                stroke="currentColor" stroke-width="2"/>
+                        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3
+                                 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.2
+                                 a1.7 1.7 0 0 0-1-1.5
+                                 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1
+                                 a1.7 1.7 0 0 0 .3-1.9
+                                 1.7 1.7 0 0 0-1.5-1H3
+                                 a2 2 0 1 1 0-4h.2
+                                 a1.7 1.7 0 0 0 1.5-1
+                                 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1
+                                 a1.7 1.7 0 0 0 1.9.3
+                                 1.7 1.7 0 0 0 1-1.5V3
+                                 a2 2 0 1 1 4 0v.2
+                                 a1.7 1.7 0 0 0 1 1.5
+                                 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1
+                                 a1.7 1.7 0 0 0-.3 1.9
+                                 1.7 1.7 0 0 0 1.5 1H21
+                                 a2 2 0 1 1 0 4h-.2
+                                 a1.7 1.7 0 0 0-1.5 1z"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </span>
+                <span>Actions</span>
+            </a>
+
+            <!-- Verification -->
+            <a href="/verification" class="{% if page == 'verification' %}active{% endif %}">
+                <span class="icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path d="M20 6L9 17l-5-5"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </span>
+                <span>Verification</span>
+            </a>
+
+            <!-- Telemetry -->
+            <a href="/telemetry" class="{% if page == 'telemetry' %}active{% endif %}">
+                <span class="icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <path d="M4 19V5M10 19V9M16 19V3M22 19H2"
+                              stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </span>
+                <span>Telemetry</span>
+            </a>
+
         </nav>
 
-        <div class="container-fluid px-4 py-4">
-            {% block content %}
-            {% endblock %}
+        <!-- Footer -->
+        <div class="sidebar-footer">
+            <span class="mode-label">MODE</span>
+            <strong>{{ mode|upper }}</strong>
         </div>
-    </div>
+
+    </aside>
+
+    <!-- ================= MAIN CONTENT ================= -->
+    <main class="smartops-main">
+
+        <!-- Top Bar -->
+        <header class="smartops-topbar">
+            <h1 class="page-title">
+                {% block title %}Operations Console{% endblock %}
+            </h1>
+        </header>
+
+        <!-- Page Content -->
+        <section class="smartops-content">
+            {% block content %}{% endblock %}
+        </section>
+
+    </main>
+
 </div>
 
+<!-- Charts -->
 <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
 {% block scripts %}{% endblock %}
 

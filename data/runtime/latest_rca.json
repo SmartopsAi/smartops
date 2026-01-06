@@ -1,15 +1,16 @@
 {
-  "anomaly_id": "A-1767610523",
-  "timestamp": "2026-01-05T10:55:23.510639",
-  "detected_anomaly": "memory_leak",
+  "anomaly_id": "A-1767707051",
+  "timestamp": "2026-01-06T13:44:11.618685",
+  "detected_anomaly": "cpu_spike",
   "root_cause": {
     "component": "DatabaseService",
-    "type": "Service Timeout",
-    "signal": "memory_leak_bytes \u2191"
+    "type": "Resource Saturation",
+    "signal": "cpu_burn_ms \u2191"
   },
   "evidence": {
     "metrics": [
-      "memory_leak_bytes \u2191"
+      "cpu_burn_ms \u2191",
+      "request_count \u2191"
     ],
     "logs": [
       "TimeoutError in OrderService"

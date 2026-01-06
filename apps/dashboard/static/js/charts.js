@@ -56,16 +56,16 @@ function renderAnomalyChart(canvasId, labels, dataPoints) {
     });
 }
 
-// Auto-initialize charts if data is present (example hook)
-document.addEventListener('DOMContentLoaded', () => {
-    // Check if we are on a page that needs dummy data for initial render
-    const overviewCanvas = document.getElementById('chart-overview-anomaly');
-    if (overviewCanvas) {
-        // Render a placeholder chart until API data loads
-        // Real implementation would pass data into this function
-        renderAnomalyChart('chart-overview-anomaly', 
-            ['10:00', '10:05', '10:10', '10:15', '10:20', '10:25'], 
-            [0.1, 0.12, 0.08, 0.65, 0.9, 0.85] 
-        );
-    }
-});
+// // Auto-initialize charts if data is present (example hook)
+// document.addEventListener('DOMContentLoaded', () => {
+//     // Check if we are on a page that needs dummy data for initial render
+//     const overviewCanvas = document.getElementById('chart-overview-anomaly');
+//     if (overviewCanvas) {
+//         // Render a placeholder chart until API data loads
+//         // Real implementation would pass data into this function
+//         renderAnomalyChart('chart-overview-anomaly', 
+//             ['10:00', '10:05', '10:10', '10:15', '10:20', '10:25'], 
+//             [0.1, 0.12, 0.08, 0.65, 0.9, 0.85] 
+//         );
+//     }
+// });
