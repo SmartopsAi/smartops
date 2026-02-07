@@ -1,0 +1,15 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: odoo-web
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: odoo-web
+  ports:
+    - name: http
+      port: {{ .Values.odoo.service.port }}
+      targetPort: {{ .Values.odoo.service.port }}
+{{- end }}

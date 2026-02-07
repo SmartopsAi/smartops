@@ -24,18 +24,24 @@ dependencies:
     alias: otelcol
     condition: telemetry.otel.enabled
 
-  # ✅ NEW: Grafana Tempo single-binary chart
+  # Grafana Tempo single-binary chart
   - name: tempo
     repository: https://grafana.github.io/helm-charts
     version: "*"
     alias: tempo
     condition: telemetry.tempo.enabled
 
+  # Ingress NGINX metrics (Prometheus Operator)
+  - name: ingress-metrics
+    version: 0.1.0
+    repository: "file://charts/ingress-metrics"
+    condition: ingress-metrics.enabled
+
   - name: erp-simulator
     version: 0.1.0
     repository: "file://charts/erp-simulator"
     condition: erp-simulator.enabled
-    
+
   - name: orchestrator
     version: 0.1.0
     repository: "file://charts/orchestrator"

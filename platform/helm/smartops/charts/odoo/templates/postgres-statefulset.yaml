@@ -1,0 +1,42 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: odoo-postgres
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: odoo-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: odoo-postgres
+  template:
+    metadata:
+      labels:
+        app: odoo-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          ports:
+            - containerPort: {{ .Values.postgres.service.port }}
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.db | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: odoo-postgres-secret
+                  key: POSTGRES_PASSWORD
+          resources:
+{{ toYaml .Values.postgres.resources | indent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: odoo-postgres-pvc
+{{- end }}

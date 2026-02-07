@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 python-multipart
+httpx
 
 # Kubernetes Client
 kubernetes
@@ -21,6 +22,7 @@ opentelemetry-instrumentation-logging
 opentelemetry-instrumentation-requests
 opentelemetry-instrumentation-urllib
 prometheus-client
-prometheus_fastapi_instrumentator
+prometheus-fastapi-instrumentator==6.1.0
+
 
 python-dotenv

@@ -1,0 +1,11 @@
+enabled: true
+
+namespace: ingress-nginx
+
+service:
+  name: ingress-nginx-metrics
+  port: 10254
+  targetPort: 10254
+
+labels:
+  release: smartops

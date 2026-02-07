@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List
+from typing import List
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Body
 from fastapi.responses import PlainTextResponse
 
 from apps.policy_engine.repository.policy_store import load_default_policies
@@ -13,33 +13,35 @@ from apps.policy_engine.runtime.adapter import load_runtime_signals
 from apps.policy_engine.runtime.evaluator import evaluate_policies
 from apps.policy_engine.runtime.guardrails import apply_guardrails
 
-app = FastAPI(title="SmartOps Policy Engine", version="0.2")
+app = FastAPI(title="SmartOps Policy Engine", version="0.3")
 
-# -----------------------------
+# ============================================================
 # Paths + defaults
-# -----------------------------
+# ============================================================
 AUDIT_PATH = Path("apps/policy_engine/audit/policy_decisions.jsonl")
 AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# Adjust these to your real k8s target (MVP defaults)
+# Default orchestration target (used unless overridden later)
 DEFAULT_TARGET = {
     "kind": "Deployment",
     "namespace": "smartops-dev",
-    "name": "erp-simulator",
+    "name": "smartops-erp-simulator",
 }
 
-
-# -----------------------------
-# Helpers
-# -----------------------------
+# ============================================================
+# Helper utilities
+# ============================================================
 def _utc_now() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
 
 def _audit(event: dict) -> None:
     """
-    Append a single JSON line event to the audit log.
-    WHY: We need traceability for demos, debugging, and PP evidence.
+    Append one policy decision to the audit log (JSONL).
+    This is critical for:
+      - demos
+      - debugging
+      - PP / viva evidence
     """
     with AUDIT_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -47,7 +49,7 @@ def _audit(event: dict) -> None:
 
 def _build_action_plan(chosen, default_target: dict) -> dict:
     """
-    Convert chosen policy action → orchestrator ActionPlan (MVP shape)
+    Convert a DSL Action into an Orchestrator-compatible ActionPlan.
     """
     if chosen.action.type == "restart":
         return {
@@ -57,7 +59,7 @@ def _build_action_plan(chosen, default_target: dict) -> dict:
             "target": default_target,
         }
 
-    # scale
+    # scale action
     return {
         "type": "scale",
         "dry_run": False,
@@ -67,72 +69,48 @@ def _build_action_plan(chosen, default_target: dict) -> dict:
     }
 
 
-def _to_report_text(decision: dict) -> str:
+# ============================================================
+# Core evaluation logic
+# ============================================================
+def _evaluate_once(payload: dict | None = None) -> dict:
     """
-    Convert decision JSON → pretty human-readable report.
-    WHY: Lecturers prefer readable reports in demos (like RCA output).
+    Runs ONE full policy evaluation cycle.
+
+    Correct production execution path:
+      Agent Detect  -> latest_detection.json
+      RCA Engine    -> latest_rca.json
+      Policy Engine -> DSL evaluation + guardrails
+
+    Optional:
+      - payload["signal"] can override runtime signal
+        (used by Orchestrator or curl for testing)
     """
-    lines: List[str] = []
-    lines.append("")
-    lines.append("===== POLICY ENGINE DECISION REPORT =====")
-    lines.append(f"Time (UTC):        {decision.get('ts_utc', 'N/A')}")
-    lines.append(f"Decision:          {decision.get('decision', 'N/A')}")
 
-    if decision.get("decision") == "no_action":
-        lines.append(f"Reason:            {decision.get('reason', 'N/A')}")
-        sig = decision.get("signal_summary") or {}
-        if sig:
-            lines.append("")
-            lines.append("Signal Summary:")
-            for k, v in sig.items():
-                lines.append(f"  - {k}: {v}")
-        lines.append("=========================================")
-        lines.append("")
-        return "\n".join(lines)
-
-    # action / blocked
-    lines.append(f"Policy:            {decision.get('policy', 'N/A')}")
-    lines.append(f"Priority:          {decision.get('priority', 'N/A')}")
-    lines.append(f"Guardrail Reason:  {decision.get('guardrail_reason', 'N/A')}")
-
-    ap = decision.get("action_plan")
-    if ap:
-        lines.append(f"Action Type:       {ap.get('type', 'N/A')}")
-        lines.append(f"Dry Run:           {ap.get('dry_run', 'N/A')}")
-        lines.append(f"Verify:            {ap.get('verify', 'N/A')}")
-
-        tgt = ap.get("target") or {}
-        if tgt:
-            lines.append(
-                f"Target:            {tgt.get('kind','?')} / {tgt.get('namespace','?')} / {tgt.get('name','?')}"
-            )
-
-        if ap.get("type") == "scale":
-            scale = ap.get("scale") or {}
-            lines.append(f"Scale Replicas:    {scale.get('replicas', 'N/A')}")
-
-    sig = decision.get("signal_summary") or {}
-    if sig:
-        lines.append("")
-        lines.append("Signal Summary:")
-        for k, v in sig.items():
-            lines.append(f"  - {k}: {v}")
-
-    lines.append("=========================================")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _evaluate_once() -> dict:
-    """
-    Runs the full evaluation once and returns the decision dict.
-    Shared by /v1/policy/evaluate and /v1/policy/evaluate/report.
-    """
+    # --------------------------------------------------------
+    # 1. Load policies (DSL)
+    # --------------------------------------------------------
     policies = load_default_policies()
+
+    # --------------------------------------------------------
+    # 2. Load runtime signal (PRIMARY SOURCE)
+    # --------------------------------------------------------
     signal = load_runtime_signals()
 
-    # Gate by detection flag
+    # --------------------------------------------------------
+    # 3. Optional override from request payload
+    #    (Payload wins over runtime — controlled & explicit)
+    # --------------------------------------------------------
+    if payload:
+        incoming_signal = payload.get("signal") or {}
+        signal.update(incoming_signal)
+        signal["raw"]["incoming"] = payload
+
+    # --------------------------------------------------------
+    # 4. Anomaly gate (PRODUCTION-CORRECT)
+    # --------------------------------------------------------
+    # We only act if Agent Detect raised an anomaly
     anomaly_flag = bool(signal["raw"]["detection"].get("anomaly", False))
+
     if not anomaly_flag:
         decision = {
             "ts_utc": _utc_now(),
@@ -146,6 +124,9 @@ def _evaluate_once() -> dict:
         _audit(decision)
         return decision
 
+    # --------------------------------------------------------
+    # 5. Evaluate policies against signal
+    # --------------------------------------------------------
     chosen = evaluate_policies(policies, signal)
 
     if not chosen:
@@ -161,6 +142,9 @@ def _evaluate_once() -> dict:
         _audit(decision)
         return decision
 
+    # --------------------------------------------------------
+    # 6. Build action plan + apply guardrails
+    # --------------------------------------------------------
     action_plan = _build_action_plan(chosen, DEFAULT_TARGET)
     allowed, reason = apply_guardrails(action_plan)
 
@@ -178,40 +162,44 @@ def _evaluate_once() -> dict:
             "rca.probability": signal.get("rca.probability"),
         },
     }
+
     _audit(decision)
     return decision
 
 
-# -----------------------------
-# Routes
-# -----------------------------
+# ============================================================
+# API routes
+# ============================================================
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
 
 
 @app.post("/v1/policy/evaluate")
-def evaluate():
+def evaluate(payload: dict = Body(default={})):
     """
-    Machine-readable JSON decision for orchestration.
+    Machine-readable decision endpoint.
+    Used by:
+      - SmartOps Orchestrator
+      - curl / test harness
     """
-    return _evaluate_once()
+    return _evaluate_once(payload)
 
 
 @app.get("/v1/policy/evaluate/report", response_class=PlainTextResponse)
 def evaluate_report():
     """
-    Human-readable text report (lecturer/demo friendly).
+    Human-readable policy decision report
+    (lecturer / demo friendly).
     """
-    decision = _evaluate_once()
+    decision = _evaluate_once(None)
     return _to_report_text(decision)
 
 
 @app.get("/v1/policy/audit/latest")
 def audit_latest(n: int = 20):
     """
-    Returns last N audit events.
-    WHY: Quick demo/debug without opening the jsonl file manually.
+    Returns last N policy decisions.
     """
     if not AUDIT_PATH.exists():
         return {"ok": True, "events": []}
@@ -224,7 +212,6 @@ def audit_latest(n: int = 20):
         try:
             events.append(json.loads(ln))
         except Exception:
-            # If an invalid line exists, skip it
             continue
 
     return {"ok": True, "returned": len(events), "events": events}

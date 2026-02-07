@@ -1,0 +1,39 @@
+enabled: false
+
+nameOverride: odoo
+namespace: smartops-dev
+
+odoo:
+  image: odoo:17.0
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  service:
+    port: 8069
+
+postgres:
+  image: postgres:15
+  storage: 5Gi
+  db: postgres
+  user: odoo
+  password: odoo123
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  service:
+    port: 5432
+
+ingress:
+  enabled: true
+  className: nginx
+  host: odoo.localhost
+  path: /

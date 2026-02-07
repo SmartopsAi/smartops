@@ -1,11 +1,12 @@
+import os
+import time
+import json
+from pathlib import Path
+
 from collector.metrics_collector import stream_metrics
 from features.windowing import SlidingWindow
 from features.feature_engineering import build_feature_vector
 from live_detect import LiveAnomalyDetector
-
-import time
-import json
-from pathlib import Path
 
 # ===================================
 # CONFIGURATION
@@ -14,12 +15,7 @@ WINDOW_SECONDS = 60
 WARMUP_WINDOWS = 5
 RECOVERY_WINDOWS = 3
 
-FEATURE_METRICS = [
-    "request_count",
-    "latency_jitter_ms",
-    "cpu_burn_ms",
-    "memory_leak_bytes"
-]
+PROFILE = os.getenv("PROFILE", "simulator")  # simulator | odoo
 
 # ===================================
 # INIT
@@ -40,7 +36,8 @@ anomaly_state = False  # tracks if system is currently in anomaly
 def main():
     global window_count, clean_counter, anomaly_state
 
-    print("[INFO] Agent Detect started (PHASE 2 – LIVE)")
+    print("[INFO] Agent Detect started (LIVE)")
+    print(f"[INFO] Running PROFILE={PROFILE}")
 
     for ts, metrics in stream_metrics():
         window_60s.add(ts, metrics)
@@ -51,12 +48,9 @@ def main():
         window_count += 1
 
         # -------------------------------
-        # Feature Engineering
+        # Feature Engineering (PROFILE-AWARE)
         # -------------------------------
-        features = build_feature_vector(
-            window_60s.values(),
-            FEATURE_METRICS
-        )
+        features = build_feature_vector(window_60s.values())
         if not features:
             continue
 
@@ -68,15 +62,25 @@ def main():
         stat_result = bool(result.get("statistical", False))
         iso_result = bool(result.get("isolation_forest", False))
 
-        # Ground truth from simulator
-        ground_truth_active = metrics.get("modes_enabled", 0) > 0
+        # -------------------------------
+        # Ground truth (SIMULATOR ONLY)
+        # -------------------------------
+        if PROFILE == "simulator":
+            ground_truth_active = metrics.get("modes_enabled", 0) > 0
+        else:
+            ground_truth_active = False  # ERP has no synthetic ground truth
+
         ground_truth = "ANOMALY" if ground_truth_active else "NORMAL"
 
         # -------------------------------
-        # DECISION GATING (CRITICAL FIX)
+        # DECISION GATING
         # -------------------------------
-        # Statistical alone CANNOT trigger anomaly in live mode
-        raw_anomaly = iso_result or (stat_result and ground_truth_active)
+        if PROFILE == "odoo":
+            # ERP mode: Isolation Forest is authoritative
+            raw_anomaly = iso_result
+        else:
+            # Simulator mode: hybrid gating
+            raw_anomaly = iso_result or (stat_result and ground_truth_active)
 
         # -------------------------------
         # WARM-UP PROTECTION
@@ -92,7 +96,6 @@ def main():
             # STATE MACHINE WITH RECOVERY
             # -------------------------------
             if anomaly_state:
-                # Already in anomaly → wait for recovery
                 if raw_anomaly:
                     clean_counter = 0
                 else:
@@ -103,7 +106,6 @@ def main():
                     clean_counter = 0
 
             else:
-                # Not in anomaly → check trigger
                 if raw_anomaly:
                     anomaly_state = True
                     clean_counter = 0
@@ -125,10 +127,10 @@ def main():
         # -------------------------------
         print("\n--- LIVE DETECTION ---")
         print(f"Time: {time.strftime('%H:%M:%S')}")
+        print(f"Profile: {PROFILE}")
         print(f"Anomaly Detected: {anomaly_final}")
         print(f"  Statistical: {stat_result}")
         print(f"  IsolationForest: {iso_result}")
-        print(f"  GroundTruth: {ground_truth}")
         print(f"  RecoveryWindows: {clean_counter}/{RECOVERY_WINDOWS}")
 
         # -------------------------------
@@ -137,10 +139,10 @@ def main():
         with open(RUNTIME_DIR / "latest_detection.json", "w") as f:
             json.dump({
                 "timestamp": time.time(),
+                "profile": PROFILE,
                 "anomaly": anomaly_final,
                 "statistical": stat_result,
                 "isolation_forest": iso_result,
-                "ground_truth": ground_truth,
                 "recovering": anomaly_state and not raw_anomaly,
                 "recovery_windows": clean_counter,
                 "required_recovery_windows": RECOVERY_WINDOWS
@@ -152,7 +154,8 @@ def main():
         with open(RUNTIME_DIR / "latest_risk.json", "w") as f:
             json.dump({
                 "risk": risk,
-                "timestamp": time.time()
+                "timestamp": time.time(),
+                "profile": PROFILE
             }, f, indent=2)
 
         time.sleep(1)

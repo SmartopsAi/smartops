@@ -55,14 +55,13 @@ prometheus:
                 spanStartTimeShift: "0s"
                 spanEndTimeShift: "0s"
 
-  # 🚫 Disable node exporter (correct place under the alias)
+  #  Disable node exporter (correct place under the alias)
   prometheus-node-exporter:
     enabled: false
 
-  # 🚫 Extra fallback for older kube-prometheus-stack versions
+  #  Extra fallback for older kube-prometheus-stack versions
   nodeExporter:
     enabled: false
-
 
 # ------------------------------------------
 # Tempo configuration
@@ -102,6 +101,12 @@ tempo:
         block_retention: 24h
 
 # ------------------------------------------
+# Ingress NGINX metrics (Phase 1)
+# ------------------------------------------
+ingress-metrics:
+  enabled: true
+
+# ------------------------------------------
 # Application toggles
 # ------------------------------------------
 apps:
@@ -124,7 +129,7 @@ erp-simulator:
 
   image:
     repository: ghcr.io/vgamaka/erp-simulator
-    tag: "dev-phase3.1"   # or dev-phase3 when rebuild
+    tag: "dev-phase3.1"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -150,16 +155,14 @@ erp-simulator:
 
   resources: {}
 
-  # simulator overrides
   simulator:
     modes:
-      memoryLeak: false      # default off in dev; you can flip for labs
+      memoryLeak: false
       cpuSpike: false
       latencyJitter: false
       errorBurst: false
-    baseErrorRate: 0.05      # base 5% error rate
-    maxExtraLatencyMs: 1000  # up to 1s extra latency when jitter enabled
-
+    baseErrorRate: 0.05
+    maxExtraLatencyMs: 1000
 
 # ------------------------------------------
 # ORCHESTRATOR
@@ -215,10 +218,6 @@ otelcol:
         spike_limit_percentage: 25
 
     exporters:
-
-      # ---------------------------
-      # Tempo exporter
-      # ---------------------------
       otlp/tempo:
         endpoint: smartops-tempo:4317
         tls:
@@ -229,7 +228,6 @@ otelcol:
         sending_queue:
           enabled: true
 
-      # Debug exporters
       debug:
         verbosity: detailed
       logging:
@@ -241,7 +239,6 @@ otelcol:
           address: "0.0.0.0:8889"
 
       pipelines:
-
         traces:
           receivers: [otlp]
           processors: [batch]

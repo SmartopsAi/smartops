@@ -10,26 +10,31 @@ class PrometheusClient:
     """
     Prometheus client for SmartOps Dashboard (progressive enhancement).
 
-    Goals:
-    - Never break the UI (Local Mode returns safe dummy values)
-    - Prefer Kubernetes-native metrics (kube-state-metrics) as primary truth
-    - Use duration histogram metrics *if they exist* (optional latency)
+    Production goals:
+    - Never break the UI (local mode returns safe dummy values)
+    - Enable Prometheus queries when:
+        - running in-cluster (KUBERNETES_SERVICE_HOST), OR
+        - PROMETHEUS_URL is explicitly provided (port-forward / dev)
+    - Prefer kube-state-metrics for workload health
+    - Provide ERP Pilot KPIs (Odoo) via a locked PromQL contract
     """
 
     def __init__(self):
         # In K8s, prefer the in-cluster Service DNS.
-        # In local dev, you normally port-forward Prometheus and set PROMETHEUS_URL=http://127.0.0.1:9090
         default_k8s_url = "http://smartops-prometheus-prometheus.smartops-dev:9090"
         default_local_url = "http://127.0.0.1:9090"
 
-        self.enabled = bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+        prom_url = os.environ.get("PROMETHEUS_URL")
 
-        self.base_url = os.environ.get(
-            "PROMETHEUS_URL",
-            default_k8s_url if self.enabled else default_local_url
-        )
+        in_cluster = bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+        explicit_prom = bool(prom_url)
 
-        logger.info(f"PrometheusClient base_url={self.base_url} enabled={self.enabled}")
+        # Enable Prometheus querying if in-cluster OR explicitly configured
+        self.enabled = in_cluster or explicit_prom
+
+        self.base_url = prom_url or (default_k8s_url if in_cluster else default_local_url)
+
+        logger.info("PrometheusClient base_url=%s enabled=%s", self.base_url, self.enabled)
 
     # -------------------------------
     # Low-level helpers
@@ -63,11 +68,14 @@ class PrometheusClient:
             return float(result[0]["value"][1])
 
         except Exception as e:
-            logger.warning(f"Prometheus instant query failed. query={query} err={e}")
+            logger.warning("Prometheus instant query failed. query=%s err=%s", query, e)
             return None
 
     def _safe_int(self, v: Optional[float]) -> int:
         return int(v) if v is not None else 0
+
+    def _safe_float(self, v: Optional[float]) -> float:
+        return float(v) if v is not None else 0.0
 
     # -------------------------------
     # Kubernetes-native KPIs (Primary)
@@ -127,6 +135,84 @@ class PrometheusClient:
             "replicas_available": avail_i,
             "status": status,
             "source": "kube_state_metrics",
+        }
+
+    # -------------------------------
+    # ERP Pilot KPIs (Odoo via ingress-nginx)
+    # -------------------------------
+
+    def get_odoo_kpis(self) -> Dict[str, Any]:
+        """
+        Returns the locked Odoo KPI contract values.
+
+        Filters:
+          host="odoo.localhost"
+          exported_namespace="smartops-dev"
+
+        KPIs:
+          - request_rate_rps
+          - error_5xx_rps
+          - latency_p95_ms
+
+        Always returns a stable schema (dummy values in local mode).
+        """
+        if not self.enabled:
+            return {
+                "profile": "odoo",
+                "request_rate_rps": 0.0,
+                "error_5xx_rps": 0.0,
+                "latency_p95_ms": 180,
+                "source": "dummy_local",
+            }
+
+        req_rate_q = """
+        sum(
+          rate(
+            nginx_ingress_controller_requests{
+              host="odoo.localhost",
+              exported_namespace="smartops-dev"
+            }[1m]
+          )
+        )
+        """
+
+        err_5xx_q = """
+        sum(
+          rate(
+            nginx_ingress_controller_requests{
+              host="odoo.localhost",
+              exported_namespace="smartops-dev",
+              status=~"5.."
+            }[1m]
+          )
+        )
+        """
+
+        p95_latency_s_q = """
+        histogram_quantile(
+          0.95,
+          sum by (le) (
+            rate(
+              nginx_ingress_controller_request_duration_seconds_bucket{
+                host="odoo.localhost",
+                exported_namespace="smartops-dev"
+              }[2m]
+            )
+          )
+        )
+        """
+
+        req_rate = self._safe_float(self._instant_query(req_rate_q))
+        err_5xx = self._safe_float(self._instant_query(err_5xx_q))
+        p95_s = self._instant_query(p95_latency_s_q)
+        p95_ms = int(p95_s * 1000) if (p95_s is not None and p95_s > 0) else 0
+
+        return {
+            "profile": "odoo",
+            "request_rate_rps": req_rate,
+            "error_5xx_rps": err_5xx,
+            "latency_p95_ms": p95_ms,
+            "source": "prometheus",
         }
 
     # -------------------------------

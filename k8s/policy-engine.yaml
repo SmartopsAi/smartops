@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartops-policy-engine
+  namespace: smartops-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smartops-policy-engine
+  template:
+    metadata:
+      labels:
+        app: smartops-policy-engine
+    spec:
+      containers:
+        - name: policy-engine
+          image: smartops-policy-engine:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+          env:
+            - name: POLICY_ENGINE_PORT
+              value: "8002"
+          volumeMounts:
+            - name: runtime-data
+              mountPath: /apps/policy_engine/data
+      volumes:
+        - name: runtime-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smartops-policy-engine
+  namespace: smartops-dev
+spec:
+  selector:
+    app: smartops-policy-engine
+  ports:
+    - name: http
+      port: 5051
+      targetPort: 8002

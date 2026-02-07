@@ -1,0 +1,20 @@
+{{- if .Values.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ingress-nginx-metrics
+  namespace: {{ .Values.namespace }}
+  labels:
+    release: {{ .Values.labels.release }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      app: ingress-nginx-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+{{- end }}

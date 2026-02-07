@@ -1,8 +1,10 @@
 from pathlib import Path
 import json
 
-BASE_DIR = Path(".")
-RUNTIME_DIR = BASE_DIR / "data/runtime"
+# Policy Engine reads runtime outputs produced by Agent Detect
+BASE_DIR = Path(__file__).resolve().parents[3]
+RUNTIME_DIR = BASE_DIR / "apps/agent-detect/data/runtime"
+
 
 def _load_json(p: Path):
     try:

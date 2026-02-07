@@ -1,9 +1,9 @@
 {
-  "timestamp": 1767718466.224965,
+  "timestamp": 1770459813.813968,
+  "profile": "simulator",
   "anomaly": false,
   "statistical": true,
   "isolation_forest": false,
-  "ground_truth": "NORMAL",
   "recovering": false,
   "recovery_windows": 0,
   "required_recovery_windows": 3
