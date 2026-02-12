@@ -316,6 +316,7 @@ class ClosedLoopManager:
             # ------------------------------------------------------------------
             verification_status_label = "NONE"
             retry_allowed = False
+            action_duration = 0.0
 
             try:
                 logger.info(
@@ -344,6 +345,17 @@ class ClosedLoopManager:
                         action_req.target.name,
                         action_duration,
                     )
+
+                    # === NEW: Structured summary log ===
+                    logger.info(
+                        "CLOSED_LOOP_SUMMARY | service=%s | action=%s | namespace=%s | duration=%.2fs | result=SUCCESS | attempt=%d",
+                        action_req.target.name,
+                        action_req.type.value,
+                        action_req.target.namespace,
+                        action_duration,
+                        item.attempt + 1,
+                    )
+
                     self._last_action_at[key] = now
                     CLOSED_LOOP_ACTIONS_TOTAL.labels(
                         type=action_type_label,
@@ -375,6 +387,13 @@ class ClosedLoopManager:
                         status="failed",
                         verification_status="GUARDRAIL_BLOCKED",
                     ).inc()
+                    logger.info(
+                        "CLOSED_LOOP_SUMMARY | service=%s | action=%s | namespace=%s | duration=0.00s | result=GUARDRAIL_BLOCKED | attempt=%d",
+                        action_req.target.name,
+                        action_req.type.value,
+                        action_req.target.namespace,
+                        item.attempt + 1,
+                    )
                     return
 
                 logger.exception("ClosedLoopManager: exception during execute_action: %s", exc)
@@ -416,6 +435,14 @@ class ClosedLoopManager:
                 status="failed",
                 verification_status=verification_status_label,
             ).inc()
+            logger.info(
+                "CLOSED_LOOP_SUMMARY | service=%s | action=%s | namespace=%s | duration=%.2fs | result=FAILED | attempt=%d",
+                action_req.target.name,
+                action_req.type.value,
+                action_req.target.namespace,
+                action_duration,
+                item.attempt + 1,
+            )
 
     def _get_current_replicas(self, namespace: str, deployment_name: str) -> Optional[int]:
         try:
