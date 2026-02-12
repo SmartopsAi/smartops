@@ -9,18 +9,23 @@ from .metric_map import (
 )
 
 # ================================
-# Configuration
+# Configuration (K8s-safe)
 # ================================
+
 PROFILE = os.getenv("PROFILE", "simulator")  # simulator | odoo
 
-SIMULATOR_METRICS_URL = "http://localhost:9000/metrics"
-PROMETHEUS_API = "http://localhost/prometheus/api/v1/query"
+# 🔥 FIX 1: Use environment variables instead of localhost
+ERP_URL = os.getenv("ERP_URL", "http://smartops-erp-simulator:9000")
+PROMETHEUS_BASE = os.getenv("PROMETHEUS_BASE", "http://smartops-prometheus-operator:9090")
 
-POLL_INTERVAL = 5  # seconds
+SIMULATOR_METRICS_URL = f"{ERP_URL}/metrics"
+PROMETHEUS_API = f"{PROMETHEUS_BASE}/api/v1/query"
+
+POLL_INTERVAL = int(os.getenv("METRICS_POLL_INTERVAL", "5"))
 
 
 # ================================
-# Simulator path (existing)
+# Simulator path
 # ================================
 def normalize_simulator_metrics(raw_metrics: dict) -> dict:
     normalized = {}
@@ -59,7 +64,7 @@ def collect_odoo_metrics():
         )
         resp.raise_for_status()
 
-        data = resp.json()["data"]["result"]
+        data = resp.json().get("data", {}).get("result", [])
 
         if not data:
             results[semantic_name] = 0.0
@@ -78,6 +83,8 @@ def stream_metrics():
     Generator that yields (timestamp, normalized_metrics)
     """
     print(f"[INFO] Agent Detect running in PROFILE={PROFILE}")
+    print(f"[INFO] ERP_URL={ERP_URL}")
+    print(f"[INFO] PROMETHEUS_API={PROMETHEUS_API}")
 
     while True:
         try:

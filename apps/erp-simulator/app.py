@@ -90,7 +90,7 @@ MODES_ENABLED_GAUGE = Gauge(
 # -----------------------------
 # OpenTelemetry Instrumentation
 # -----------------------------
-from instrumentation import configure_otel
+from .instrumentation import configure_otel
 
 
 # ---------------------------------------------------------------------------

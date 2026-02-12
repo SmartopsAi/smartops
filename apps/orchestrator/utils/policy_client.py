@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import json
+import logging
+from dataclasses import dataclass, asdict, is_dataclass
 from enum import Enum
 from typing import Optional, Any, Dict
 
 import httpx
 
-from ..models.action_models import ActionRequest
+
+logger = logging.getLogger("smartops.policy_client")
 
 
 class PolicyDecisionType(str, Enum):
@@ -19,16 +22,12 @@ class PolicyDecisionType(str, Enum):
 class PolicyDecision:
     decision: PolicyDecisionType
     reason: Optional[str] = None
-    # Optional action plan from policy engine (JSON dict)
     action_plan: Optional[Dict[str, Any]] = None
-    # Raw policy engine response for debugging
     raw: Optional[Dict[str, Any]] = None
 
 
 class PolicyDecisionError(Exception):
-    """
-    Raised when the Policy Engine returns an invalid response or cannot be reached.
-    """
+    """Raised when the Policy Engine returns an invalid response or cannot be reached."""
     pass
 
 
@@ -45,23 +44,182 @@ def _policy_engine_base_url() -> str:
     return os.getenv("POLICY_ENGINE_URL", "http://127.0.0.1:5051").rstrip("/")
 
 
-async def check_policy(action: ActionRequest) -> PolicyDecision:
+def _to_dict(obj: Any) -> Dict[str, Any]:
+    """
+    Convert common Python/Pydantic objects to a plain dict safely.
+    """
+    if obj is None:
+        return {}
+
+    if isinstance(obj, dict):
+        return obj
+
+    # Pydantic v2
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump()
+        except Exception:
+            pass
+
+    # Pydantic v1
+    if hasattr(obj, "dict"):
+        try:
+            return obj.dict()
+        except Exception:
+            pass
+
+    # dataclass
+    if is_dataclass(obj):
+        try:
+            return asdict(obj)
+        except Exception:
+            pass
+
+    # fallback: object __dict__
+    try:
+        return dict(obj.__dict__)
+    except Exception:
+        return {}
+
+
+def _extract_service(d: Dict[str, Any]) -> str:
+    # Most common locations
+    for k in ("service", "svc", "deployment", "app"):
+        v = d.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    # If nested raw incoming exists
+    raw = d.get("raw") or {}
+    incoming = raw.get("incoming") or {}
+    v = incoming.get("service")
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+
+    return "erp-simulator"
+
+
+def _normalize_signal_fields(d: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert various possible signal shapes into the DSL-required flat keys:
+      anomaly.type, anomaly.score, rca.cause, rca.probability
+    """
+    out: Dict[str, Any] = {}
+
+    # Case A: Already flat (preferred)
+    for k in ("anomaly.type", "anomaly.score", "rca.cause", "rca.probability"):
+        if k in d:
+            out[k] = d[k]
+
+    # Case B: Nested dict style (like your debug in policy-engine container)
+    anomaly = d.get("anomaly")
+    if isinstance(anomaly, dict):
+        if "type" in anomaly and "anomaly.type" not in out:
+            out["anomaly.type"] = anomaly.get("type")
+        if "score" in anomaly and "anomaly.score" not in out:
+            out["anomaly.score"] = anomaly.get("score")
+
+    rca = d.get("rca")
+    if isinstance(rca, dict):
+        if "cause" in rca and "rca.cause" not in out:
+            out["rca.cause"] = rca.get("cause")
+        if "probability" in rca and "rca.probability" not in out:
+            out["rca.probability"] = rca.get("probability")
+
+    # Case C: Orchestrator models might use different field names
+    # Try common alternates
+    if "anomaly.type" not in out:
+        for k in ("type", "anomaly_type", "anomalyType"):
+            if k in d:
+                out["anomaly.type"] = d.get(k)
+                break
+
+    if "anomaly.score" not in out:
+        for k in ("score", "anomaly_score", "anomalyScore", "severity"):
+            if k in d:
+                out["anomaly.score"] = d.get(k)
+                break
+
+    if "rca.cause" not in out:
+        # Some RCA signals come as rankedCauses[0].cause
+        ranked = d.get("rankedCauses")
+        if isinstance(ranked, list) and ranked:
+            first = ranked[0]
+            if isinstance(first, dict) and "cause" in first:
+                out["rca.cause"] = first.get("cause")
+
+        for k in ("cause", "root_cause", "rootCause"):
+            if k in d and "rca.cause" not in out:
+                out["rca.cause"] = d.get(k)
+                break
+
+    if "rca.probability" not in out:
+        for k in ("probability", "confidence", "rca_probability", "rcaProbability"):
+            if k in d:
+                out["rca.probability"] = d.get(k)
+                break
+
+    # Final cleanup / defaults
+    # Ensure numeric fields are numeric where possible
+    if "anomaly.score" in out:
+        try:
+            out["anomaly.score"] = float(out["anomaly.score"])
+        except Exception:
+            pass
+
+    if "rca.probability" in out:
+        try:
+            out["rca.probability"] = float(out["rca.probability"])
+        except Exception:
+            pass
+
+    return out
+
+
+def _build_policy_payload(signal_obj: Any) -> Dict[str, Any]:
+    """
+    Policy Engine expects:
+      {
+        "service": "<name>",
+        "signal": {
+          "anomaly.type": "...",
+          "anomaly.score": 1.0,
+          "rca.cause": "...",
+          "rca.probability": 0.95
+        }
+      }
+    """
+    d = _to_dict(signal_obj)
+
+    # If caller already passed {"signal": {...}, "service": "..."} just keep it
+    if isinstance(d.get("signal"), dict):
+        service = d.get("service") or _extract_service(d)
+        signal = _normalize_signal_fields(d["signal"])
+        return {"service": service, "signal": signal}
+
+    service = _extract_service(d)
+    signal = _normalize_signal_fields(d)
+
+    return {"service": service, "signal": signal}
+
+
+async def check_policy(signal_obj: Any) -> PolicyDecision:
     """
     Ask Policy Engine (DSL) whether remediation should happen.
-
-    NOTE:
-    - Current Policy Engine evaluates based on runtime files (latest_detection.json, latest_rca.json, etc.)
-    - So we call it with no body (but POST is fine).
+    We POST the extracted signal payload.
     """
     url = f"{_policy_engine_base_url()}/v1/policy/evaluate"
+    payload = _build_policy_payload(signal_obj)
+
+    # 🔥 Debug output you NEED to see in logs
+    logger.warning("POLICY_ENGINE payload=%s", json.dumps(payload, ensure_ascii=False))
 
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.post(url)
+            resp = await client.post(url, json=payload)
     except Exception as exc:  # network, timeout, DNS, etc.
         raise PolicyDecisionError(f"Policy Engine unreachable: {exc}") from exc
 
-    # If policy engine crashed or returned HTML, this protects you
     content_type = (resp.headers.get("content-type") or "").lower()
     if resp.status_code >= 400:
         raise PolicyDecisionError(f"Policy Engine HTTP {resp.status_code}: {resp.text[:200]}")
@@ -77,7 +235,6 @@ async def check_policy(action: ActionRequest) -> PolicyDecision:
     reason = data.get("reason") or data.get("guardrail_reason") or None
     action_plan = data.get("action_plan")
 
-    # Map Policy Engine decision → orchestrator decision
     if pe_decision == "action" and action_plan:
         return PolicyDecision(
             decision=PolicyDecisionType.ALLOW,
@@ -86,7 +243,6 @@ async def check_policy(action: ActionRequest) -> PolicyDecision:
             raw=data,
         )
 
-    # "blocked" or "no_action" or missing action_plan → deny execution
     if pe_decision in {"blocked", "no_action"}:
         return PolicyDecision(
             decision=PolicyDecisionType.DENY,
@@ -95,5 +251,4 @@ async def check_policy(action: ActionRequest) -> PolicyDecision:
             raw=data,
         )
 
-    # Unknown response shape
     raise PolicyDecisionError(f"Unexpected Policy Engine response: {data}")

@@ -1,9 +1,35 @@
+
 POLICY "restart_on_latency_jitter":
   WHEN anomaly.type == "latency_jitter"
   THEN restart(service)
-  PRIORITY 10
+  PRIORITY 100
+
 
 POLICY "scale_on_cpu_saturation":
-  WHEN rca.cause == "cpu_saturation"
+  WHEN anomaly.type == "cpu_spike" AND rca.cause == "cpu_saturation"
   THEN scale(service, 6)
-  PRIORITY 5
+  PRIORITY 90
+
+
+POLICY "restart_on_memory_pressure":
+  WHEN anomaly.type == "memory_pressure" AND rca.cause == "memory_leak"
+  THEN restart(service)
+  PRIORITY 80
+
+
+POLICY "restart_on_high_anomaly_score":
+  WHEN anomaly.score > 0.95
+  THEN restart(service)
+  PRIORITY 70
+
+
+POLICY "aggressive_scale_on_high_confidence_cpu":
+  WHEN rca.cause == "cpu_saturation" AND rca.probability > 0.9
+  THEN scale(service, 8)
+  PRIORITY 85
+
+
+POLICY "safe_restart_on_uncertain_rca":
+  WHEN anomaly.score > 0.8 AND rca.probability < 0.5
+  THEN restart(service)
+  PRIORITY 60

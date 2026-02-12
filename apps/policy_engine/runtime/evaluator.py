@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from typing import Any
 from apps.policy_engine.dsl.model import Policy, Condition
+
 
 def _compare(lhs: Any, op: str, rhs: Any) -> bool:
     if op == "==":
@@ -14,14 +17,37 @@ def _compare(lhs: Any, op: str, rhs: Any) -> bool:
         return float(lhs) <= float(rhs)
     return False
 
+
+def _get_field_value(signal: dict, field: str) -> Any:
+    """
+    Supports:
+      1) flat keys: signal["anomaly.type"]
+      2) nested dicts via dot-path: signal["anomaly"]["type"]
+    """
+    # Fast path: exact match (flat dict style)
+    if field in signal:
+        return signal.get(field)
+
+    # Dot-path traversal for nested dict style
+    cur: Any = signal
+    for part in field.split("."):
+        if not isinstance(cur, dict):
+            return None
+        if part not in cur:
+            return None
+        cur = cur.get(part)
+    return cur
+
+
 def _match_condition(cond: Condition, signal: dict) -> bool:
-    lhs = signal.get(cond.field)
+    lhs = _get_field_value(signal, cond.field)
     if lhs is None:
         return False
     return _compare(lhs, cond.op, cond.value)
 
+
 def evaluate_policies(policies: list[Policy], signal: dict):
-    matched = []
+    matched: list[Policy] = []
     for p in policies:
         ok = all(_match_condition(c, signal) for c in p.conditions)
         if ok:

@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import requests
 from pathlib import Path
 
 from collector.metrics_collector import stream_metrics
@@ -17,6 +18,9 @@ RECOVERY_WINDOWS = 3
 
 PROFILE = os.getenv("PROFILE", "simulator")  # simulator | odoo
 
+# Orchestrator endpoint (K8s default service name)
+ORCH_URL = os.getenv("ORCH_URL", "http://smartops-orchestrator:8000")
+
 # ===================================
 # INIT
 # ===================================
@@ -28,16 +32,46 @@ RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 window_count = 0
 clean_counter = 0
-anomaly_state = False  # tracks if system is currently in anomaly
+anomaly_state = False
+last_sent_state = False  # Prevent duplicate signal spam
+
+# ===================================
+# HELPER: Send anomaly to orchestrator
+# ===================================
+def send_anomaly_signal(anomaly_final, risk):
+    try:
+        payload = {
+            "windowId": str(int(time.time())),
+            "service": "erp-simulator",
+            "type": "resource",
+            "score": 0.9 if anomaly_final else 0.1,
+            "isAnomaly": anomaly_final,
+        }
+
+        response = requests.post(
+            f"{ORCH_URL}/v1/signals/anomaly",
+            json=payload,
+            timeout=3,
+        )
+
+        if response.status_code < 300:
+            print("[INFO] Anomaly signal sent to orchestrator")
+        else:
+            print("[WARN] Orchestrator rejected signal:", response.text)
+
+    except Exception as e:
+        print("[WARN] Failed to send anomaly signal:", e)
+
 
 # ===================================
 # MAIN LOOP
 # ===================================
 def main():
-    global window_count, clean_counter, anomaly_state
+    global window_count, clean_counter, anomaly_state, last_sent_state
 
     print("[INFO] Agent Detect started (LIVE)")
     print(f"[INFO] Running PROFILE={PROFILE}")
+    print(f"[INFO] Orchestrator URL={ORCH_URL}")
 
     for ts, metrics in stream_metrics():
         window_60s.add(ts, metrics)
@@ -48,7 +82,7 @@ def main():
         window_count += 1
 
         # -------------------------------
-        # Feature Engineering (PROFILE-AWARE)
+        # Feature Engineering
         # -------------------------------
         features = build_feature_vector(window_60s.values())
         if not features:
@@ -68,18 +102,14 @@ def main():
         if PROFILE == "simulator":
             ground_truth_active = metrics.get("modes_enabled", 0) > 0
         else:
-            ground_truth_active = False  # ERP has no synthetic ground truth
-
-        ground_truth = "ANOMALY" if ground_truth_active else "NORMAL"
+            ground_truth_active = False
 
         # -------------------------------
         # DECISION GATING
         # -------------------------------
         if PROFILE == "odoo":
-            # ERP mode: Isolation Forest is authoritative
             raw_anomaly = iso_result
         else:
-            # Simulator mode: hybrid gating
             raw_anomaly = iso_result or (stat_result and ground_truth_active)
 
         # -------------------------------
@@ -92,9 +122,6 @@ def main():
             risk = "LOW"
 
         else:
-            # -------------------------------
-            # STATE MACHINE WITH RECOVERY
-            # -------------------------------
             if anomaly_state:
                 if raw_anomaly:
                     clean_counter = 0
@@ -104,7 +131,6 @@ def main():
                 if clean_counter >= RECOVERY_WINDOWS:
                     anomaly_state = False
                     clean_counter = 0
-
             else:
                 if raw_anomaly:
                     anomaly_state = True
@@ -112,9 +138,6 @@ def main():
 
             anomaly_final = anomaly_state
 
-            # -------------------------------
-            # RISK ESTIMATION
-            # -------------------------------
             if anomaly_state:
                 risk = "HIGH"
             elif clean_counter > 0:
@@ -158,7 +181,18 @@ def main():
                 "profile": PROFILE
             }, f, indent=2)
 
+        # -------------------------------
+        # SEND TO ORCHESTRATOR (ONLY ON STATE CHANGE)
+        # -------------------------------
+        if anomaly_final and not last_sent_state:
+            send_anomaly_signal(anomaly_final, risk)
+            last_sent_state = True
+
+        if not anomaly_final:
+            last_sent_state = False
+
         time.sleep(1)
+
 
 # ===================================
 # ENTRY POINT

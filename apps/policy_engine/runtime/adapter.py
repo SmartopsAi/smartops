@@ -12,6 +12,7 @@ def _load_json(p: Path):
     except Exception:
         return None
 
+
 def load_runtime_signals():
     detection = _load_json(RUNTIME_DIR / "latest_detection.json") or {}
     rca = _load_json(RUNTIME_DIR / "latest_rca.json") or {}
@@ -19,14 +20,23 @@ def load_runtime_signals():
 
     anomaly_flag = bool(detection.get("anomaly", False))
 
-    # anomaly.type is best taken from RCA when available
+    # -------------------------------
+    # Derive anomaly.type
+    # -------------------------------
     detected_anomaly = rca.get("detected_anomaly")
-    anomaly_type = detected_anomaly if detected_anomaly else ("unknown" if anomaly_flag else "none")
+    if detected_anomaly:
+        anomaly_type = detected_anomaly
+    else:
+        anomaly_type = "unknown" if anomaly_flag else "none"
 
+    anomaly_score = 1.0 if anomaly_flag else 0.0
+
+    # -------------------------------
+    # Derive RCA cause
+    # -------------------------------
     confidence = float(rca.get("confidence", 0.0)) if anomaly_flag else 0.0
 
     root = rca.get("root_cause") or {}
-    # naive "cause" mapping (can improve later)
     signal = (root.get("signal") or "").lower()
     rca_type = (root.get("type") or "").lower()
 
@@ -39,15 +49,24 @@ def load_runtime_signals():
     else:
         rca_cause = "unknown"
 
+    # -------------------------------
+    # IMPORTANT: Nested structure
+    # -------------------------------
     dsl_signal = {
-        "anomaly.type": anomaly_type,
-        "anomaly.score": 1.0 if anomaly_flag else 0.0,
-        "rca.cause": rca_cause,
-        "rca.probability": confidence,
+        "anomaly": {
+            "type": anomaly_type,
+            "score": anomaly_score,
+        },
+        "rca": {
+            "cause": rca_cause,
+            "probability": confidence,
+        },
+        "service": rca.get("service", "erp-simulator"),
         "raw": {
             "detection": detection,
             "rca": rca,
-            "features": features
-        }
+            "features": features,
+        },
     }
+
     return dsl_signal
