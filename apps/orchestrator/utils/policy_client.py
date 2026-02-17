@@ -175,6 +175,15 @@ def _normalize_signal_fields(d: Dict[str, Any]) -> Dict[str, Any]:
 
     return out
 
+# policy_client.py
+from apps.orchestrator.services.k8s_core import get_deployment_replicas
+
+SERVICE_TO_DEPLOYMENT = {
+    "erp-simulator": "smartops-erp-simulator",
+    "odoo": "odoo-web",
+}
+SMARTOPS_NS = os.getenv("SMARTOPS_NAMESPACE", "smartops-dev")
+
 
 def _build_policy_payload(signal_obj: Any) -> Dict[str, Any]:
     """
@@ -199,6 +208,17 @@ def _build_policy_payload(signal_obj: Any) -> Dict[str, Any]:
 
     service = _extract_service(d)
     signal = _normalize_signal_fields(d)
+
+    # Add current replica context (best-effort, never break policy check)
+    try:
+        dep = SERVICE_TO_DEPLOYMENT.get(service)
+        if dep:
+            cur = get_deployment_replicas(dep, SMARTOPS_NS)
+            if cur is not None:
+                signal["k8s.replicas.current"] = int(cur)
+    except Exception:
+        pass
+
 
     return {"service": service, "signal": signal}
 

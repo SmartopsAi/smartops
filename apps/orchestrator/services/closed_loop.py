@@ -1,12 +1,11 @@
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Union, Dict, Tuple, List
-
-from ..utils.policy_client import check_policy, PolicyDecisionType
+from typing import Optional, Union, Dict, Tuple, List, Any
 
 from opentelemetry import trace
 from prometheus_client import Counter, Histogram, Gauge
@@ -21,6 +20,7 @@ from ..models.action_models import (
 from ..models.verification_models import VerificationStatus
 from ..services.k8s_core import list_deployments
 from ..services import orchestrator_service  # use execute_action()
+from ..utils.policy_client import check_policy, PolicyDecisionType
 
 logger = logging.getLogger("smartops.closed_loop")
 tracer = trace.get_tracer(__name__)
@@ -100,6 +100,63 @@ def _is_guardrail_exception(exc: Exception) -> bool:
     return "guardrail" in msg or "replica" in msg
 
 
+def _safe_model_dict(obj: Any) -> Dict[str, Any]:
+    """
+    Safely get a dict for pydantic v1/v2 models.
+    """
+    # pydantic v2
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump()
+        except Exception:  # noqa: BLE001
+            return {}
+    # pydantic v1
+    if hasattr(obj, "dict"):
+        try:
+            return obj.dict()
+        except Exception:  # noqa: BLE001
+            return {}
+    # fallback
+    try:
+        return dict(obj)  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _resolve_service_name(kind: str, signal: Union[AnomalySignal, RcaSignal]) -> Optional[str]:
+    """
+    Return best-effort service identifier.
+
+    - anomaly: signal.service
+    - rca: prefer signal.service; fallback to rankedCauses[0].svc; fallback to metadata hints
+    """
+    if kind == "anomaly":
+        svc = getattr(signal, "service", None)
+        return str(svc).strip() if svc else None
+
+    svc = getattr(signal, "service", None)
+    if svc:
+        s = str(svc).strip()
+        return s if s else None
+
+    ranked = getattr(signal, "rankedCauses", None) or []
+    if ranked:
+        top = ranked[0]
+        top_svc = getattr(top, "svc", None)
+        if top_svc:
+            s = str(top_svc).strip()
+            return s if s else None
+
+    meta = getattr(signal, "metadata", None) or {}
+    for k in ("service", "source_service", "root_service", "deployment", "deployment_name"):
+        v = meta.get(k)
+        if v:
+            s = str(v).strip()
+            if s:
+                return s
+    return None
+
+
 class ClosedLoopManager:
     def __init__(
         self,
@@ -123,6 +180,45 @@ class ClosedLoopManager:
         self._scale_history: Dict[Tuple[str, str], List[Tuple[float, int]]] = {}
 
         self._worker_task: Optional[asyncio.Task] = None
+
+        # --------------------------------------------------
+        # Sustained anomaly tracking (production + research)
+        # --------------------------------------------------
+        self._anomaly_window_history: Dict[str, List[float]] = {}
+        self._sustained_services: Dict[str, float] = {}
+
+        self.sustained_gate_enabled: bool = os.getenv("SUSTAINED_GATE_ENABLED", "true").lower() in {
+            "1", "true", "yes", "y"
+        }
+        self.required_sustained_windows: int = int(os.getenv("SUSTAINED_REQUIRED_WINDOWS", "3"))
+        self.sustained_window_seconds: int = int(os.getenv("SUSTAINED_WINDOW_SECONDS", "30"))
+
+        # cap memory per service
+        self.max_history_per_service: int = int(os.getenv("SUSTAINED_MAX_HISTORY", "50"))
+
+        # --------------------------------------------------
+        # Service canonicalization / alias map
+        # (helps until agent-diagnose is fixed)
+        # --------------------------------------------------
+        self._service_alias_map: Dict[str, str] = {}
+        raw_map = os.getenv("SERVICE_ALIAS_MAP_JSON", "").strip()
+        if raw_map:
+            try:
+                parsed = json.loads(raw_map)
+                if isinstance(parsed, dict):
+                    # ensure strings
+                    self._service_alias_map = {str(k): str(v) for k, v in parsed.items()}
+                    logger.info("Loaded SERVICE_ALIAS_MAP_JSON keys=%s", list(self._service_alias_map.keys()))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to parse SERVICE_ALIAS_MAP_JSON: %s", exc)
+
+    def _canonical_service(self, svc: Optional[str]) -> Optional[str]:
+        if not svc:
+            return None
+        s = str(svc).strip()
+        if not s:
+            return None
+        return self._service_alias_map.get(s, s)
 
     async def start(self) -> None:
         if self._worker_task is None:
@@ -211,21 +307,115 @@ class ClosedLoopManager:
 
         raise ValueError(f"Unknown action type from policy engine: {plan}")
 
+    def _update_sustained_state_on_anomaly(self, service_name: str, now_ts: float) -> None:
+        history = self._anomaly_window_history.get(service_name, [])
+        cutoff = now_ts - self.sustained_window_seconds
+        history = [t for t in history if t >= cutoff]
+        history.append(now_ts)
+
+        # keep bounded
+        if self.max_history_per_service > 0 and len(history) > self.max_history_per_service:
+            history = history[-self.max_history_per_service :]
+
+        self._anomaly_window_history[service_name] = history
+
+        # If NOT sustained -> ensure no sustain marker
+        if len(history) < self.required_sustained_windows:
+            self._sustained_services.pop(service_name, None)
+            return
+
+        # sustained
+        self._sustained_services[service_name] = now_ts
+        logger.info("SUSTAINED_ANOMALY | service=%s | windows=%d", service_name, len(history))
+
+    def _auto_expire_sustained(self, now_ts: float) -> None:
+        """
+        Improvement 1:
+        Auto-expire sustained markers even if no RCA arrives.
+        """
+        expired = [
+            svc for svc, ts in self._sustained_services.items()
+            if (now_ts - ts) > self.sustained_window_seconds
+        ]
+        for svc in expired:
+            logger.info("SUSTAIN_EXPIRED_AUTO | service=%s", svc)
+            self._sustained_services.pop(svc, None)
+
     async def _process_item(self, item: QueueItem) -> None:
         with tracer.start_as_current_span("smartops.closed_loop.process_signal") as span:
             span.set_attribute("smartops.signal.kind", item.kind)
             span.set_attribute("smartops.signal.attempt", item.attempt)
 
+            raw = _safe_model_dict(item.signal)
+            logger.info(
+                "SIGNAL_RAW | kind=%s | type=%s | data=%s",
+                item.kind,
+                type(item.signal).__name__,
+                raw,
+            )
+
             CLOSED_LOOP_SIGNALS_TOTAL.labels(kind=item.kind, result="processed").inc()
 
+            # --------------------------------------------------
+            # Sustained anomaly gating logic (production-grade)
+            # --------------------------------------------------
+            svc_raw = _resolve_service_name(item.kind, item.signal)
+            service_name = self._canonical_service(svc_raw)
+
+            if not service_name:
+                logger.warning(
+                    "SUSTAIN_NO_SERVICE | kind=%s | type=%s | data=%s",
+                    item.kind,
+                    type(item.signal).__name__,
+                    raw,
+                )
+
+            if self.sustained_gate_enabled:
+                now_ts = time.time()
+
+                # Improvement 1: auto-expire sustained markers globally
+                self._auto_expire_sustained(now_ts)
+
+                # Improvement 2: strict RCA skip if we cannot resolve a service
+                if item.kind == "rca" and not service_name:
+                    logger.info("RCA_SKIPPED_NO_SERVICE | windowId=%s", raw.get("windowId"))
+                    CLOSED_LOOP_SIGNALS_TOTAL.labels(kind="rca", result="skipped_no_service").inc()
+                    return
+
+                if service_name:
+                    logger.info(
+                        "SUSTAIN_DEBUG | enabled=%s | kind=%s | service=%s | sustained_keys=%s",
+                        self.sustained_gate_enabled,
+                        item.kind,
+                        service_name,
+                        list(self._sustained_services.keys()),
+                    )
+
+                if service_name and item.kind == "anomaly":
+                    self._update_sustained_state_on_anomaly(service_name, now_ts)
+
+                if service_name and item.kind == "rca":
+                    sustained_at = self._sustained_services.get(service_name)
+                    if not sustained_at:
+                        logger.info("RCA_SKIPPED_NOT_SUSTAINED | service=%s", service_name)
+                        CLOSED_LOOP_SIGNALS_TOTAL.labels(kind="rca", result="skipped_not_sustained").inc()
+                        return
+
+                    if (now_ts - sustained_at) > self.sustained_window_seconds:
+                        logger.info("RCA_SKIPPED_SUSTAIN_EXPIRED | service=%s", service_name)
+                        CLOSED_LOOP_SIGNALS_TOTAL.labels(kind="rca", result="skipped_sustain_expired").inc()
+                        self._sustained_services.pop(service_name, None)
+                        return
+
             # ------------------------------------------------------------------
-            # 1) Ask Policy Engine for decision (NOW payload-driven via policy_client)
+            # 1) Ask Policy Engine for decision (payload-driven)
             # ------------------------------------------------------------------
             try:
                 policy_decision = await check_policy(item.signal)
             except Exception as exc:
                 logger.error("Policy Engine error: %s", exc)
                 span.record_exception(exc)
+                CLOSED_LOOP_SIGNALS_TOTAL.labels(kind=item.kind, result="policy_error").inc()
                 return
 
             if policy_decision.decision != PolicyDecisionType.ALLOW:
@@ -237,6 +427,7 @@ class ClosedLoopManager:
 
             if not policy_decision.action_plan:
                 logger.info("Policy allowed but no action plan returned")
+                CLOSED_LOOP_SIGNALS_TOTAL.labels(kind=item.kind, result="policy_allowed_no_plan").inc()
                 return
 
             action_req = self._action_request_from_policy_plan(policy_decision.action_plan)
@@ -254,6 +445,11 @@ class ClosedLoopManager:
             if last is not None and (now - last) < self.cooldown_seconds:
                 logger.info("ClosedLoopManager: cooldown active for %s, skipping action", key)
                 span.set_attribute("smartops.closed_loop.cooldown_skipped", True)
+                CLOSED_LOOP_ACTIONS_TOTAL.labels(
+                    type=action_req.type.value,
+                    status="skipped",
+                    verification_status="COOLDOWN",
+                ).inc()
                 return
 
             span.set_attribute("smartops.closed_loop.cooldown_skipped", False)
@@ -264,14 +460,19 @@ class ClosedLoopManager:
             action_type_label = action_req.type.value
 
             if self.max_actions_per_hour > 0:
-                history = self._action_history.get(key, [])
+                hist = self._action_history.get(key, [])
                 cutoff = now - 3600
-                history = [t for t in history if t >= cutoff]
-                self._action_history[key] = history
-                if len(history) >= self.max_actions_per_hour:
+                hist = [t for t in hist if t >= cutoff]
+                self._action_history[key] = hist
+                if len(hist) >= self.max_actions_per_hour:
                     reason = "max_actions_per_hour_exceeded"
                     logger.warning("ClosedLoopManager: guardrail %s for %s, skipping action", reason, key)
                     CLOSED_LOOP_GUARDRAIL_BLOCKS_TOTAL.labels(type=action_type_label, reason=reason).inc()
+                    CLOSED_LOOP_ACTIONS_TOTAL.labels(
+                        type=action_type_label,
+                        status="skipped",
+                        verification_status="GUARDRAIL",
+                    ).inc()
                     return
 
             if action_req.type == ActionType.SCALE and action_req.scale is not None:
@@ -280,6 +481,18 @@ class ClosedLoopManager:
                     desired = action_req.scale.replicas
                     delta = desired - current
 
+                    # --- Scale-down stabilization (production safety) ---
+                    max_scale_down_step = int(os.getenv("GUARDRAIL_MAX_SCALE_DOWN_STEP", "0"))
+                    if max_scale_down_step > 0 and delta < 0 and abs(delta) > max_scale_down_step:
+                        new_desired = max(0, current - max_scale_down_step)
+                        logger.warning(
+                            "ClosedLoopManager: scale-down limited for %s/%s (current=%d desired=%d step=%d -> new_desired=%d)",
+                            ns, deployment_name, current, desired, max_scale_down_step, new_desired
+                        )
+                        action_req.scale.replicas = new_desired
+                        desired = new_desired
+                        delta = desired - current
+
                     if self.max_replicas > 0 and desired > self.max_replicas:
                         reason = "max_replicas_exceeded"
                         logger.warning(
@@ -287,6 +500,11 @@ class ClosedLoopManager:
                             reason, ns, deployment_name, desired, self.max_replicas,
                         )
                         CLOSED_LOOP_GUARDRAIL_BLOCKS_TOTAL.labels(type=action_type_label, reason=reason).inc()
+                        CLOSED_LOOP_ACTIONS_TOTAL.labels(
+                            type=action_type_label,
+                            status="skipped",
+                            verification_status="GUARDRAIL",
+                        ).inc()
                         return
 
                     if delta > 0 and self.max_scale_increase_15m > 0:
@@ -303,6 +521,11 @@ class ClosedLoopManager:
                                 reason, ns, deployment_name, net_recent_inc, delta, self.max_scale_increase_15m,
                             )
                             CLOSED_LOOP_GUARDRAIL_BLOCKS_TOTAL.labels(type=action_type_label, reason=reason).inc()
+                            CLOSED_LOOP_ACTIONS_TOTAL.labels(
+                                type=action_type_label,
+                                status="skipped",
+                                verification_status="GUARDRAIL",
+                            ).inc()
                             return
 
                         shistory.append((now, delta))
@@ -346,7 +569,6 @@ class ClosedLoopManager:
                         action_duration,
                     )
 
-                    # === NEW: Structured summary log ===
                     logger.info(
                         "CLOSED_LOOP_SUMMARY | service=%s | action=%s | namespace=%s | duration=%.2fs | result=SUCCESS | attempt=%d",
                         action_req.target.name,
@@ -364,11 +586,8 @@ class ClosedLoopManager:
                     ).inc()
                     return
 
-                # decide retry
                 if verification:
-                    retry_allowed = verification.status in {
-                        VerificationStatus.TIMED_OUT,
-                    }
+                    retry_allowed = verification.status in {VerificationStatus.TIMED_OUT}
                 else:
                     retry_allowed = True
 
@@ -456,7 +675,11 @@ class ClosedLoopManager:
                 replicas = dep.get("replicas")
                 return replicas if replicas is not None else 0
 
-        logger.warning("ClosedLoopManager: deployment %s/%s not found while reading replicas", namespace, deployment_name)
+        logger.warning(
+            "ClosedLoopManager: deployment %s/%s not found while reading replicas",
+            namespace,
+            deployment_name,
+        )
         return None
 
 

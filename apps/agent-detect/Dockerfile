@@ -12,4 +12,4 @@ RUN pip install --no-cache-dir --upgrade pip && \
         numpy \
         scikit-learn
 
-CMD ["python", "apps/agent-detect/app.py"]
+CMD ["python", "app.py"]

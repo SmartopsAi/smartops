@@ -20,23 +20,29 @@ def _compare(lhs: Any, op: str, rhs: Any) -> bool:
 
 def _get_field_value(signal: dict, field: str) -> Any:
     """
+    Prefer nested dict (runtime) values over flat keys (incoming payload),
+    so runtime-driven closed-loop cannot be overridden by trigger payload.
     Supports:
-      1) flat keys: signal["anomaly.type"]
-      2) nested dicts via dot-path: signal["anomaly"]["type"]
+      - nested via dot-path: signal["anomaly"]["type"]
+      - flat keys: signal["anomaly.type"]
     """
-    # Fast path: exact match (flat dict style)
+
+    # 1) Dot-path traversal FIRST (nested runtime wins)
+    cur: Any = signal
+    ok = True
+    for part in field.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            ok = False
+            break
+        cur = cur.get(part)
+    if ok:
+        return cur
+
+    # 2) Fallback: flat dict style (payload-driven)
     if field in signal:
         return signal.get(field)
 
-    # Dot-path traversal for nested dict style
-    cur: Any = signal
-    for part in field.split("."):
-        if not isinstance(cur, dict):
-            return None
-        if part not in cur:
-            return None
-        cur = cur.get(part)
-    return cur
+    return None
 
 
 def _match_condition(cond: Condition, signal: dict) -> bool:

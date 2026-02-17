@@ -7,7 +7,7 @@ DSL_GRAMMAR = r"""
 
     condition: FIELD COMPARE value
 
-    FIELD: "anomaly.type" | "anomaly.score" | "rca.cause" | "rca.probability"
+    FIELD: /[a-zA-Z_][a-zA-Z0-9_.]*/
 
     COMPARE: "==" | ">" | "<" | ">=" | "<="
 

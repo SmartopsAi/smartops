@@ -24,3 +24,7 @@ data/runtime/*.json
 
 # Env files
 *.env
+
+# Ignore all runtime folders in submodules
+**/data/runtime/
+

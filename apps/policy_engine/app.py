@@ -79,14 +79,31 @@ def _build_action_plan(chosen, signal: dict) -> dict:
 # ============================================================
 def _evaluate_once(payload: dict | None = None) -> dict:
     policies = load_default_policies()
-    signal = load_runtime_signals()
 
-    if payload:
-        incoming_signal = payload.get("signal") or {}
+    # If caller provided a signal payload, evaluate ONLY that payload
+    # (do not mix with runtime adapter signals).
+    if payload and isinstance(payload.get("signal"), dict) and payload["signal"]:
+        incoming_signal = payload["signal"]
+
+        # minimal canonical envelope so anomaly gating and target resolution work
+        signal = {
+            "service": payload.get("service") or incoming_signal.get("service"),
+            "raw": {
+                "incoming": payload,
+                "detection": {
+                    # Treat external evaluate payloads as "active" by default.
+                    # Orchestrator calls policy engine only when it wants a decision.
+                    "anomaly": True
+                },
+            },
+        }
         signal.update(incoming_signal)
-        signal["raw"]["incoming"] = payload
 
-    anomaly_flag = bool(signal["raw"]["detection"].get("anomaly", False))
+    else:
+        # Default behavior (no payload given): use runtime adapter
+        signal = load_runtime_signals()
+
+    anomaly_flag = bool(signal.get("raw", {}).get("detection", {}).get("anomaly", False))
 
     if not anomaly_flag:
         decision = {

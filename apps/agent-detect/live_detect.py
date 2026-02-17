@@ -7,7 +7,7 @@ from models.isolation_forest import IsolationForestModel
 
 PROFILE = os.getenv("PROFILE", "simulator")
 
-BASE_DIR = Path(__file__).resolve().parents[2]  # smartops/
+BASE_DIR = Path(__file__).resolve().parent
 DATASET_FILE = BASE_DIR / "data" / "datasets" / "features.csv"
 
 
@@ -15,7 +15,12 @@ def load_training_features():
     """
     Load simulator training features from CSV.
     Used ONLY in simulator mode.
+    If dataset does not exist, return None safely.
     """
+    if not DATASET_FILE.exists():
+        print(f"[LiveDetect] WARNING: Training dataset not found at {DATASET_FILE}. Running without static training.")
+        return None
+
     X = []
     with open(DATASET_FILE) as f:
         reader = csv.DictReader(f)
@@ -23,6 +28,11 @@ def load_training_features():
             row.pop("timestamp", None)
             row.pop("label", None)
             X.append({k: float(v) for k, v in row.items()})
+
+    if not X:
+        print("[LiveDetect] WARNING: Training dataset empty. Running without static training.")
+        return None
+
     return X
 
 
@@ -36,20 +46,26 @@ class LiveAnomalyDetector:
         if self.profile == "simulator":
             X = load_training_features()
 
-            self.stats = StatisticalBaseline()
-            self.stats.fit(X)
+            # If dataset missing → fallback to dynamic mode
+            if X is None:
+                self.stats = None
+                self.iso = IsolationForestModel()
+                self.feature_keys = None
+                print("[LiveDetect] Simulator fallback mode enabled (no training dataset).")
 
-            self.iso = IsolationForestModel()
-            self.iso.fit([list(x.values()) for x in X])
+            else:
+                self.stats = StatisticalBaseline()
+                self.stats.fit(X)
 
-            self.feature_keys = list(X[0].keys())
+                self.iso = IsolationForestModel()
+                self.iso.fit([list(x.values()) for x in X])
+
+                self.feature_keys = list(X[0].keys())
 
         # -------------------------------
         # ERP / ODOO MODE (production)
         # -------------------------------
         else:
-            # No static training data
-            # Isolation Forest works on live feature vectors
             self.stats = None
             self.iso = IsolationForestModel()
             self.feature_keys = None
@@ -61,9 +77,9 @@ class LiveAnomalyDetector:
         """
 
         # -------------------------------
-        # SIMULATOR PATH
+        # SIMULATOR TRAINED PATH
         # -------------------------------
-        if self.profile == "simulator":
+        if self.profile == "simulator" and self.feature_keys is not None:
             x = [feature_vector[k] for k in self.feature_keys]
 
             stats_anomaly = self.stats.predict(feature_vector)
@@ -76,9 +92,9 @@ class LiveAnomalyDetector:
             }
 
         # -------------------------------
-        # ERP / ODOO PATH
+        # FALLBACK / ERP PATH
         # -------------------------------
-        # Use only Isolation Forest on live features
+        # Works without training dataset
         values = list(feature_vector.values())
 
         iso_anomaly = self.iso.predict(values)
