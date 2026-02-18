@@ -1,14 +1,13 @@
 """
-Simple prefix-based deployment name resolver for SmartOps.
+Deployment name resolver for SmartOps.
 
-Converts friendly names:
-    erp-simulator       → smartops-erp-simulator
-    orchestrator        → smartops-orchestrator
-    grafana             → smartops-grafana
+Supports BOTH:
+1. SmartOps-prefixed deployments (smartops-*)
+2. Standalone Helm releases (e.g. odoo-web)
 
-If the name already starts with 'smartops-', it is returned unchanged.
-
-Optional: validate the resolved deployment name using K8s API.
+Resolution order:
+  1. Exact name as provided
+  2. smartops-<name>
 """
 
 import logging
@@ -23,25 +22,9 @@ logger = logging.getLogger("smartops.name_resolver")
 SMARTOPS_PREFIX = "smartops-"
 
 
-def resolve_deployment_name(name: str) -> str:
+def deployment_exists(name: str, namespace: str) -> bool:
     """
-    Convert a friendly name to the real Kubernetes Deployment name.
-
-    Example:
-        "erp-simulator"  -> "smartops-erp-simulator"
-        "smartops-erp-simulator" -> unchanged
-    """
-    if name.startswith(SMARTOPS_PREFIX):
-        return name
-
-    resolved = SMARTOPS_PREFIX + name
-    return resolved
-
-
-def validate_deployment_exists(name: str, namespace: str) -> bool:
-    """
-    Optional helper to validate if a deployment actually exists in the cluster.
-    Returns True if found, False otherwise.
+    Check if a deployment exists in the given namespace.
     """
     _, apps_v1 = get_k8s_clients()
     try:
@@ -50,24 +33,38 @@ def validate_deployment_exists(name: str, namespace: str) -> bool:
     except ApiException as exc:
         if exc.status == 404:
             return False
-        logger.error("K8s API error while validating deployment=%s: %s", name, exc)
+        logger.error(
+            "K8s API error while checking deployment=%s namespace=%s: %s",
+            name,
+            namespace,
+            exc,
+        )
         return False
 
 
-def resolve_and_validate(name: str, namespace: str) -> Optional[str]:
+def resolve_deployment_name(name: str, namespace: str) -> Optional[str]:
     """
-    Resolve + validate. Returns:
-        resolved name → if exists
-        None          → if not found in cluster
+    Resolve a deployment name safely.
+
+    Resolution order:
+      1. Exact name
+      2. smartops-<name>
+
+    Returns resolved name if found, else None.
     """
-    resolved = resolve_deployment_name(name)
-    if validate_deployment_exists(resolved, namespace):
-        return resolved
+
+    # 1️⃣ Exact name (standalone Helm releases like odoo-web)
+    if deployment_exists(name, namespace):
+        logger.info("Resolved deployment using exact name: %s", name)
+        return name
+
+    # 2️⃣ SmartOps-prefixed name
+    prefixed = SMARTOPS_PREFIX + name
+    if deployment_exists(prefixed, namespace):
+        logger.info("Resolved deployment using prefixed name: %s", prefixed)
+        return prefixed
 
     logger.warning(
-        "resolve_and_validate: Deployment '%s' (resolved='%s') not found in namespace=%s",
-        name,
-        resolved,
-        namespace,
+        "Deployment resolution failed: name='%s' namespace='%s'", name, namespace
     )
     return None

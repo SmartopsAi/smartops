@@ -1,0 +1,36 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odoo-web
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.odoo.replicas }}
+  selector:
+    matchLabels:
+      app: odoo-web
+  template:
+    metadata:
+      labels:
+        app: odoo-web
+    spec:
+      containers:
+        - name: odoo
+          image: {{ .Values.odoo.image }}
+          ports:
+            - containerPort: {{ .Values.odoo.service.port }}
+          env:
+            - name: HOST
+              value: odoo-postgres
+            - name: PORT
+              value: "{{ .Values.postgres.service.port }}"
+            - name: USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: odoo-postgres-secret
+                  key: POSTGRES_PASSWORD
+          resources:
+{{ toYaml .Values.odoo.resources | indent 12 }}
+{{- end }}

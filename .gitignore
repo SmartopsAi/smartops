@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+
+# Logs & runtime
+logs/
+pids/
+*.log
+
+# OS
+.DS_Store
+
+# Data runtime artifacts
+data/runtime/*.json
+
+# Helm cache
+*.tgz
+
+# Env files
+*.env
+
+# Ignore all runtime folders in submodules
+**/data/runtime/
+

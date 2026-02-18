@@ -56,8 +56,8 @@ def setup_otel(app: FastAPI) -> None:
     # 2) OTLP gRPC exporter
     span_exporter = OTLPSpanExporter(
         endpoint=otlp_endpoint,
-        insecure=True,
     )
+
 
     span_processor = BatchSpanProcessor(span_exporter)
     provider.add_span_processor(span_processor)

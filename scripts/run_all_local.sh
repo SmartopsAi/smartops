@@ -60,6 +60,10 @@ sleep 3
 echo "▶ Starting Policy Watcher"
 launch "Policy Watcher" "./scripts/local/start_policy_watch.sh"
 
+echo "▶ Starting Dashboard (Local UI)"
+launch "Dashboard" "./scripts/local/start_dashboard.sh"
+sleep 2
+
 echo "-------------------------------------------------"
 echo "✅ SmartOps FULL SYSTEM STARTED"
 echo "👉 Inject chaos to test closed-loop recovery"

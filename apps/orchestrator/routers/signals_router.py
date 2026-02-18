@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, Any, Tuple, List
 import logging
+from typing import Dict, Any
 
 from fastapi import APIRouter, HTTPException, status, Request
 from opentelemetry import trace
@@ -18,18 +18,6 @@ router = APIRouter(
     tags=["signals"],
 )
 
-
-# ------------------------------------------------------------------------------
-# Helper: Convert Pydantic model to pure dict (safe for JSON serialization)
-# ------------------------------------------------------------------------------
-def _signal_to_dict(signal: Any) -> Dict[str, Any]:
-    try:
-        return signal.model_dump()
-    except Exception:
-        # fallback (should not normally be needed)
-        return dict(signal)
-
-
 # ------------------------------------------------------------------------------
 # POST /signals/anomaly
 # ------------------------------------------------------------------------------
@@ -37,39 +25,39 @@ def _signal_to_dict(signal: Any) -> Dict[str, Any]:
     "/anomaly",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest anomaly signal (from agent-detect).",
-    response_description="Signal accepted and forwarded to closed-loop.",
 )
 async def ingest_anomaly(signal: AnomalySignal, request: Request) -> Dict[str, Any]:
     """
-    Receives anomaly detection results.
+    Correct workflow (production-safe):
 
-    Workflow:
-        1. Validate schema (via Pydantic)
-        2. Add to in-memory signal store (for debugging/dashboards)
-        3. Forward into ClosedLoopManager queue
-        4. Immediately return 202 (non-blocking)
-
-    This endpoint must remain:
-        • NON-BLOCKING
-        • High-throughput
-        • Low latency
-
-    Closed-loop work happens asynchronously.
+    1. Store anomaly signal
+    2. Enqueue into ClosedLoopManager
+    3. Closed loop will:
+        - call Policy Engine
+        - build ActionRequest
+        - execute if allowed
     """
     with tracer.start_as_current_span("signals.ingest_anomaly") as span:
-        span.set_attribute("smartops.signal.windowId", signal.windowId)
-        span.set_attribute("smartops.signal.service", signal.service)
-        span.set_attribute("smartops.signal.type", signal.type.value)
-        span.set_attribute("smartops.signal.score", signal.score)
-        span.set_attribute("smartops.signal.isAnomaly", signal.isAnomaly)
-        span.set_attribute("http.client_ip", request.client.host)
-
         try:
-            # Store for debug/dashboard
+            span.set_attribute("smartops.signal.windowId", signal.windowId)
+            span.set_attribute("smartops.signal.service", signal.service)
+            span.set_attribute("smartops.signal.type", signal.type.value)
+            span.set_attribute("smartops.signal.score", signal.score)
+            span.set_attribute("smartops.signal.isAnomaly", signal.isAnomaly)
+            span.set_attribute("http.client_ip", request.client.host)
+
+            # 1) Store signal
             add_anomaly(signal)
 
-            # Send to closed-loop queue
+            # 2) Enqueue for closed-loop processing
             await closed_loop_manager.enqueue_anomaly(signal)
+
+            return {
+                "accepted": True,
+                "kind": "anomaly",
+                "windowId": signal.windowId,
+                "enqueued": True,
+            }
 
         except Exception as exc:
             logger.exception("Failed to process anomaly signal")
@@ -79,46 +67,31 @@ async def ingest_anomaly(signal: AnomalySignal, request: Request) -> Dict[str, A
                 detail=f"Error processing anomaly signal: {exc}",
             )
 
-        return {
-            "accepted": True,
-            "kind": "anomaly",
-            "windowId": signal.windowId,
-        }
-
-
 # ------------------------------------------------------------------------------
 # POST /signals/rca
 # ------------------------------------------------------------------------------
 @router.post(
     "/rca",
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Ingest root-cause analysis signal (from agent-diagnose).",
-    response_description="RCA signal accepted and forwarded to closed-loop.",
+    summary="Ingest RCA signal (from agent-diagnose).",
 )
 async def ingest_rca(signal: RcaSignal, request: Request) -> Dict[str, Any]:
-    """
-    Receives RCA outputs from agent-diagnose.
-
-    Typical input structure:
-        {
-          "windowId": "t1",
-          "service": "erp-simulator",
-          "rankedCauses": [ ... ],
-          "confidence": 0.87
-        }
-
-    Closed-loop engine determines which RCA → remediation mapping applies.
-    """
     with tracer.start_as_current_span("signals.ingest_rca") as span:
-        span.set_attribute("smartops.signal.windowId", signal.windowId)
-        span.set_attribute("smartops.signal.service", signal.service or "")
-        span.set_attribute("smartops.signal.confidence", signal.confidence)
-        span.set_attribute("smartops.signal.cause.count", len(signal.rankedCauses))
-        span.set_attribute("http.client_ip", request.client.host)
-
         try:
+            span.set_attribute("smartops.signal.windowId", signal.windowId)
+            span.set_attribute("smartops.signal.service", signal.service or "")
+            span.set_attribute("smartops.signal.confidence", signal.confidence)
+            span.set_attribute("http.client_ip", request.client.host)
+
             add_rca(signal)
             await closed_loop_manager.enqueue_rca(signal)
+
+            return {
+                "accepted": True,
+                "kind": "rca",
+                "windowId": signal.windowId,
+                "enqueued": True,
+            }
 
         except Exception as exc:
             logger.exception("Failed to process RCA signal")
@@ -128,53 +101,24 @@ async def ingest_rca(signal: RcaSignal, request: Request) -> Dict[str, Any]:
                 detail=f"Error processing RCA signal: {exc}",
             )
 
-        return {
-            "accepted": True,
-            "kind": "rca",
-            "windowId": signal.windowId,
-        }
-
-
 # ------------------------------------------------------------------------------
 # GET /signals/recent
 # ------------------------------------------------------------------------------
 @router.get(
     "/recent",
-    summary="Fetch in-memory recent anomaly + RCA signals.",
-    description=(
-        "Lightweight debugging endpoint. "
-        "In production, this should be accessible only to internal dashboards."
-    ),
+    summary="Fetch recent anomaly + RCA signals (debug).",
 )
 async def list_recent(limit: int = 20) -> Dict[str, Any]:
-    """
-    Provides recent:
-      - anomaly signals
-      - rca signals
-
-    For debugging and dashboard integration.
-
-    This is NOT a production persistence layer.
-    """
-    with tracer.start_as_current_span("signals.list_recent") as span:
-        span.set_attribute("smartops.limit", limit)
-
-        try:
-            anomalies, rcas = get_recent_signals(limit=limit)
-
-        except Exception as exc:
-            logger.exception("Failed to fetch recent signals")
-            span.record_exception(exc)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to retrieve recent signals: {exc}",
-            )
-
-        span.set_attribute("smartops.anomaly.count", len(anomalies))
-        span.set_attribute("smartops.rca.count", len(rcas))
-
+    try:
+        anomalies, rcas = get_recent_signals(limit=limit)
         return {
             "limit": limit,
             "anomalies": anomalies,
             "rcas": rcas,
         }
+    except Exception as exc:
+        logger.exception("Failed to fetch recent signals")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve recent signals: {exc}",
+        )

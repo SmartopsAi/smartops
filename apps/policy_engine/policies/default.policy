@@ -1,9 +1,19 @@
-POLICY "restart_on_latency_jitter":
-  WHEN anomaly.type == "latency_jitter"
-  THEN restart(service)
-  PRIORITY 10
+POLICY "scale_up_on_resource_saturation_step_1":
+  WHEN rca.cause == "Resource Saturation"
+       AND rca.probability >= 0.9
+       AND k8s.replicas.current < 4
+  THEN scale(service, 4)
+  PRIORITY 200
 
-POLICY "scale_on_cpu_saturation":
-  WHEN rca.cause == "cpu_saturation"
+POLICY "scale_up_on_resource_saturation_step_2":
+  WHEN rca.cause == "Resource Saturation"
+       AND rca.probability >= 0.9
+       AND k8s.replicas.current >= 4
+       AND k8s.replicas.current < 6
   THEN scale(service, 6)
-  PRIORITY 5
+  PRIORITY 190
+
+POLICY "hard_cap_enforcement":
+  WHEN k8s.replicas.current > 6
+  THEN scale(service, 6)
+  PRIORITY 300

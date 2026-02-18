@@ -1,0 +1,18 @@
+replicaCount: 1
+
+image:
+  repository: smartops/orchestrator
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8001
+
+serviceMonitor:
+  enabled: true
+  additionalLabels: {}
+
+metrics:
+  path: /metrics
+  interval: 10s

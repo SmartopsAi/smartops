@@ -1,9 +1,31 @@
 import numpy as np
 import json
 import os
+import os
 
 # Ensure runtime directory exists (for dashboard & prediction)
 os.makedirs("data/runtime", exist_ok=True)
+
+# ================================
+# Profile-aware metric selection
+# ================================
+PROFILE = os.getenv("PROFILE", "simulator")
+
+SIMULATOR_METRICS = [
+    "memory_leak_bytes",
+    "cpu_burn_ms",
+    "latency_jitter_ms",
+    "request_count",
+    "error_count",
+    "modes_enabled",
+]
+
+ODOO_METRICS = [
+    "erp_req_rate",
+    "erp_5xx_rate",
+    "erp_p95_latency",
+]
+
 
 def extract_metric_series(window_values, metric_name):
     """
@@ -42,15 +64,21 @@ def compute_features(series):
         "min": minimum,
         "max": maximum,
         "slope": slope,
-        "spike": spike
+        "spike": spike,
     }
 
 
-def build_feature_vector(window_values, metrics):
+def build_feature_vector(window_values):
     """
     Build full feature vector for selected metrics
     Also saves latest feature vector for dashboard & prediction preview
     """
+
+    if PROFILE == "odoo":
+        metrics = ODOO_METRICS
+    else:
+        metrics = SIMULATOR_METRICS
+
     feature_vector = {}
 
     for metric in metrics:
@@ -64,7 +92,7 @@ def build_feature_vector(window_values, metrics):
             feature_vector[f"{metric}_{key}"] = value
 
     # -------------------------------
-    # SAVE latest features (Phase 5 – Prediction preview)
+    # SAVE latest features (dashboard & prediction preview)
     # -------------------------------
     if feature_vector:
         with open("data/runtime/latest_features.json", "w") as f:

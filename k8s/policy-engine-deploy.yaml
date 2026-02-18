@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartops-policy-engine
+  namespace: smartops-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smartops-policy-engine
+  template:
+    metadata:
+      labels:
+        app: smartops-policy-engine
+    spec:
+      containers:
+        - name: policy-engine
+          image: smartops-policy-engine:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+          env:
+            - name: POLICY_ENGINE_PORT
+              value: "8002"
+            - name: PYTHONPATH
+              value: "/app"

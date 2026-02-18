@@ -1,11 +1,13 @@
+import os
+import time
+import json
+import requests
+from pathlib import Path
+
 from collector.metrics_collector import stream_metrics
 from features.windowing import SlidingWindow
 from features.feature_engineering import build_feature_vector
 from live_detect import LiveAnomalyDetector
-
-import time
-import json
-from pathlib import Path
 
 # ===================================
 # CONFIGURATION
@@ -14,12 +16,10 @@ WINDOW_SECONDS = 60
 WARMUP_WINDOWS = 5
 RECOVERY_WINDOWS = 3
 
-FEATURE_METRICS = [
-    "request_count",
-    "latency_jitter_ms",
-    "cpu_burn_ms",
-    "memory_leak_bytes"
-]
+PROFILE = os.getenv("PROFILE", "simulator")  # simulator | odoo
+
+# Orchestrator endpoint (K8s default service name)
+ORCH_URL = os.getenv("ORCH_URL", "http://smartops-orchestrator:8000")
 
 # ===================================
 # INIT
@@ -32,15 +32,46 @@ RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 window_count = 0
 clean_counter = 0
-anomaly_state = False  # tracks if system is currently in anomaly
+anomaly_state = False
+last_sent_state = False  # Prevent duplicate signal spam
+
+# ===================================
+# HELPER: Send anomaly to orchestrator
+# ===================================
+def send_anomaly_signal(anomaly_final, risk):
+    try:
+        payload = {
+            "windowId": str(int(time.time())),
+            "service": "erp-simulator",
+            "type": "resource",
+            "score": 0.9 if anomaly_final else 0.1,
+            "isAnomaly": anomaly_final,
+        }
+
+        response = requests.post(
+            f"{ORCH_URL}/v1/signals/anomaly",
+            json=payload,
+            timeout=3,
+        )
+
+        if response.status_code < 300:
+            print("[INFO] Anomaly signal sent to orchestrator")
+        else:
+            print("[WARN] Orchestrator rejected signal:", response.text)
+
+    except Exception as e:
+        print("[WARN] Failed to send anomaly signal:", e)
+
 
 # ===================================
 # MAIN LOOP
 # ===================================
 def main():
-    global window_count, clean_counter, anomaly_state
+    global window_count, clean_counter, anomaly_state, last_sent_state
 
-    print("[INFO] Agent Detect started (PHASE 2 – LIVE)")
+    print("[INFO] Agent Detect started (LIVE)")
+    print(f"[INFO] Running PROFILE={PROFILE}")
+    print(f"[INFO] Orchestrator URL={ORCH_URL}")
 
     for ts, metrics in stream_metrics():
         window_60s.add(ts, metrics)
@@ -53,10 +84,7 @@ def main():
         # -------------------------------
         # Feature Engineering
         # -------------------------------
-        features = build_feature_vector(
-            window_60s.values(),
-            FEATURE_METRICS
-        )
+        features = build_feature_vector(window_60s.values())
         if not features:
             continue
 
@@ -68,15 +96,21 @@ def main():
         stat_result = bool(result.get("statistical", False))
         iso_result = bool(result.get("isolation_forest", False))
 
-        # Ground truth from simulator
-        ground_truth_active = metrics.get("modes_enabled", 0) > 0
-        ground_truth = "ANOMALY" if ground_truth_active else "NORMAL"
+        # -------------------------------
+        # Ground truth (SIMULATOR ONLY)
+        # -------------------------------
+        if PROFILE == "simulator":
+            ground_truth_active = metrics.get("modes_enabled", 0) > 0
+        else:
+            ground_truth_active = False
 
         # -------------------------------
-        # DECISION GATING (CRITICAL FIX)
+        # DECISION GATING
         # -------------------------------
-        # Statistical alone CANNOT trigger anomaly in live mode
-        raw_anomaly = iso_result or (stat_result and ground_truth_active)
+        if PROFILE == "odoo":
+            raw_anomaly = iso_result
+        else:
+            raw_anomaly = iso_result or (stat_result and ground_truth_active)
 
         # -------------------------------
         # WARM-UP PROTECTION
@@ -88,11 +122,7 @@ def main():
             risk = "LOW"
 
         else:
-            # -------------------------------
-            # STATE MACHINE WITH RECOVERY
-            # -------------------------------
             if anomaly_state:
-                # Already in anomaly → wait for recovery
                 if raw_anomaly:
                     clean_counter = 0
                 else:
@@ -101,18 +131,13 @@ def main():
                 if clean_counter >= RECOVERY_WINDOWS:
                     anomaly_state = False
                     clean_counter = 0
-
             else:
-                # Not in anomaly → check trigger
                 if raw_anomaly:
                     anomaly_state = True
                     clean_counter = 0
 
             anomaly_final = anomaly_state
 
-            # -------------------------------
-            # RISK ESTIMATION
-            # -------------------------------
             if anomaly_state:
                 risk = "HIGH"
             elif clean_counter > 0:
@@ -125,10 +150,10 @@ def main():
         # -------------------------------
         print("\n--- LIVE DETECTION ---")
         print(f"Time: {time.strftime('%H:%M:%S')}")
+        print(f"Profile: {PROFILE}")
         print(f"Anomaly Detected: {anomaly_final}")
         print(f"  Statistical: {stat_result}")
         print(f"  IsolationForest: {iso_result}")
-        print(f"  GroundTruth: {ground_truth}")
         print(f"  RecoveryWindows: {clean_counter}/{RECOVERY_WINDOWS}")
 
         # -------------------------------
@@ -137,10 +162,10 @@ def main():
         with open(RUNTIME_DIR / "latest_detection.json", "w") as f:
             json.dump({
                 "timestamp": time.time(),
+                "profile": PROFILE,
                 "anomaly": anomaly_final,
                 "statistical": stat_result,
                 "isolation_forest": iso_result,
-                "ground_truth": ground_truth,
                 "recovering": anomaly_state and not raw_anomaly,
                 "recovery_windows": clean_counter,
                 "required_recovery_windows": RECOVERY_WINDOWS
@@ -152,10 +177,22 @@ def main():
         with open(RUNTIME_DIR / "latest_risk.json", "w") as f:
             json.dump({
                 "risk": risk,
-                "timestamp": time.time()
+                "timestamp": time.time(),
+                "profile": PROFILE
             }, f, indent=2)
 
+        # -------------------------------
+        # SEND TO ORCHESTRATOR (ONLY ON STATE CHANGE)
+        # -------------------------------
+        if anomaly_final and not last_sent_state:
+            send_anomaly_signal(anomaly_final, risk)
+            last_sent_state = True
+
+        if not anomaly_final:
+            last_sent_state = False
+
         time.sleep(1)
+
 
 # ===================================
 # ENTRY POINT

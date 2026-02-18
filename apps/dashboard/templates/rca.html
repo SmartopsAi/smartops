@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block title %}Root Cause Analysis (RCA){% endblock %}
+
+{% block content %}
+
+<!-- ======================================================
+   INCIDENT HEADER
+   ====================================================== -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-danger">
+            <div class="card-body d-flex justify-content-between align-items-center">
+
+                <div>
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="9"
+                                    stroke="currentColor" stroke-width="2"/>
+                            <path d="M12 7v5" stroke="currentColor" stroke-width="2"/>
+                            <circle cx="12" cy="16" r="1" fill="currentColor"/>
+                        </svg>
+                        <h5 class="mb-0 text-danger">Latest Incident Diagnosis</h5>
+                    </div>
+
+                    <div class="text-muted small">
+                        Incident ID:
+                        <span id="incident-id"
+                              class="font-monospace fw-semibold">
+                            …
+                        </span>
+                    </div>
+                </div>
+
+                <div class="text-end">
+                    <div class="text-muted small">Analysis Time</div>
+                    <div id="rca-time" class="fw-semibold">--</div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ======================================================
+   RCA CONTENT
+   ====================================================== -->
+<div class="row g-4">
+
+    <!-- ================= ROOT CAUSES ================= -->
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header d-flex align-items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M3 12h18M12 3v18"
+                          stroke="currentColor" stroke-width="2"/>
+                </svg>
+                Ranked Root Causes
+            </div>
+
+            <div class="card-body">
+                <canvas id="chart-rca" height="140"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= EVIDENCE ================= -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+
+            <div class="card-header d-flex align-items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <rect x="3" y="3" width="18" height="18" rx="3"
+                          stroke="currentColor" stroke-width="2"/>
+                    <path d="M7 7h10M7 12h10M7 17h6"
+                          stroke="currentColor" stroke-width="2"/>
+                </svg>
+                Supporting Evidence
+            </div>
+
+            <div class="card-body">
+
+                <!-- Traces -->
+                <div class="mb-3">
+                    <div class="fw-semibold small mb-2">Correlated Traces</div>
+                    <div class="list-group list-group-flush small"
+                         id="trace-list">
+                        <div class="text-muted fst-italic">
+                            Loading traces…
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs -->
+                <div>
+                    <div class="fw-semibold small mb-2">Logs</div>
+                    <div id="log-box"
+                         class="bg-light p-2 rounded border font-monospace"
+                         style="font-size: 0.75rem; height: 160px; overflow-y: auto;">
+                        Loading logs…
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="card-footer bg-transparent text-center">
+                <a href="/telemetry"
+                   class="btn btn-sm btn-outline-primary">
+                    Deep Dive in Telemetry
+                </a>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+fetch('/api/rca')
+    .then(response => response.json())
+    .then(data => {
+        if (!data.report) return;
+
+        const rpt = data.report;
+
+        /* ================= HEADER ================= */
+        document.getElementById('incident-id').innerText =
+            rpt.incident_id || '-';
+
+        document.getElementById('rca-time').innerText =
+            new Date(rpt.ts).toLocaleString();
+
+        /* ================= ROOT CAUSE CHART ================= */
+        const causes = rpt.ranked_causes || [];
+
+        const labels = causes.map(
+            c => `${c.component} — ${c.type}`
+        );
+
+        const values = causes.map(() =>
+            100 / (causes.length || 1)
+        );
+
+        if (causes.length > 0) {
+            new Chart(document.getElementById('chart-rca'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        data: values,
+                        backgroundColor: '#ef4444',
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            max: 100,
+                            grid: { display: false }
+                        },
+                        y: {
+                            grid: { display: false }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx =>
+                                    `Contribution: ${ctx.raw.toFixed(1)}%`
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        /* ================= TRACES ================= */
+        const traceList = document.getElementById('trace-list');
+        traceList.innerHTML = '';
+
+        if (rpt.evidence?.traces?.length) {
+            rpt.evidence.traces.forEach(trace => {
+                const div = document.createElement('div');
+                div.className = 'list-group-item font-monospace small';
+                div.innerText = trace;
+                traceList.appendChild(div);
+            });
+        } else {
+            traceList.innerHTML =
+                '<div class="text-muted fst-italic">No traces available.</div>';
+        }
+
+        /* ================= LOGS ================= */
+        const logBox = document.getElementById('log-box');
+        if (rpt.evidence?.logs?.length) {
+            logBox.innerHTML = rpt.evidence.logs.join('<br>');
+        } else {
+            logBox.innerText = 'No logs available.';
+        }
+    });
+</script>
+{% endblock %}

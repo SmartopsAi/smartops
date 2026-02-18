@@ -222,7 +222,7 @@ def scale_deployment_endpoint(req: ScaleRequest) -> ActionResult:
     ns = _normalize_namespace(req.namespace)
 
     # Resolve friendly name → real K8s deployment name
-    resolved_name = resolve_deployment_name(req.deployment)
+    resolved_name = resolve_deployment_name(req.deployment, ns)
     target_str = _format_target(ns, resolved_name, kind="Deployment")
 
     with tracer.start_as_current_span("orchestrator.k8s.scale") as span:
@@ -308,7 +308,7 @@ def restart_deployment_endpoint(req: RestartRequest) -> ActionResult:
     source = "k8s_restart"
     ns = _normalize_namespace(req.namespace)
 
-    resolved_name = resolve_deployment_name(req.deployment)
+    resolved_name = resolve_deployment_name(req.deployment, ns)
     target_str = _format_target(ns, resolved_name, kind="Deployment")
     now_str = datetime.datetime.utcnow().isoformat() + "Z"
 
@@ -397,9 +397,10 @@ async def execute_action(req: ActionRequest) -> ActionResult:
     source_base = "actions_execute"
     # Resolve the target deployment name (friendly → real)
     requested_name = req.target.name
-    resolved_name = resolve_deployment_name(requested_name)
     ns = _normalize_namespace(req.target.namespace)
     kind = req.target.kind
+
+    resolved_name = resolve_deployment_name(requested_name, ns)
 
     # Use resolved name in target string
     target_str = _format_target(ns, resolved_name, kind)
@@ -414,44 +415,7 @@ async def execute_action(req: ActionRequest) -> ActionResult:
         if req.reason:
             span.set_attribute("smartops.action.reason", req.reason)
 
-        # ------------------------------------------------------------------
-        # Policy Engine guardrail (only for non-dry-run requests)
-        # ------------------------------------------------------------------
-        if not req.dry_run:
-            try:
-                decision = await check_policy(req)
-            except PolicyDecisionError as exc:
-                span.set_attribute("smartops.policy.status", "error")
-                logger.error(
-                    "Policy Engine error for %s %s: %s",
-                    req.type.value,
-                    target_str,
-                    exc,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Policy Engine error: {exc}",
-                )
-
-            allowed = decision.get("allow", True)
-            span.set_attribute("smartops.policy.allowed", allowed)
-            span.set_attribute(
-                "smartops.policy.decision",
-                decision.get("decision", "unknown"),
-            )
-            if not allowed:
-                reason = decision.get("reason", "Blocked by policy")
-                logger.warning(
-                    "Policy Engine denied action %s on %s: %s",
-                    req.type.value,
-                    target_str,
-                    reason,
-                )
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Action blocked by policy engine: {reason}",
-                )
-
+        
         verification = None
 
         # ---------------- SCALE ----------------

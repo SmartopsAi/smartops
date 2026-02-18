@@ -469,6 +469,45 @@ def restart_deployment(
             "dry_run": dry_run,
         }
 
+def get_deployment_replicas(
+    name: str,
+    namespace: Optional[str] = None,
+) -> Optional[int]:
+    """
+    Return current desired replicas (spec.replicas) for a Deployment.
+    Used for policy decisions (e.g., stabilization / scale-down).
+    """
+    ns = _resolve_namespace(namespace)
+    labels = {"verb": "read_scale", "resource": "deployment", "namespace": ns}
+
+    with tracer.start_as_current_span("k8s.get_deployment_replicas") as span:
+        span.set_attribute("smartops.k8s.deployment", name)
+        span.set_attribute("smartops.k8s.namespace", ns)
+
+        _, apps_v1 = _clients()
+        start = time.time()
+        try:
+            dep = apps_v1.read_namespaced_deployment(name=name, namespace=ns)
+            duration = time.time() - start
+
+            K8S_API_CALLS_TOTAL.labels(**labels).inc()
+            K8S_API_LATENCY_SECONDS.labels(**labels).observe(duration)
+
+            return int(dep.spec.replicas or 0)
+
+        except ApiException as exc:
+            duration = time.time() - start
+            K8S_API_CALLS_TOTAL.labels(**labels).inc()
+            K8S_API_LATENCY_SECONDS.labels(**labels).observe(duration)
+            K8S_API_ERRORS_TOTAL.labels(**labels).inc()
+
+            logger.error("Error reading deployment replicas %s/%s: %s", ns, name, exc)
+            span.record_exception(exc)
+            return None
+        except Exception as exc:
+            logger.error("Unexpected error reading deployment replicas %s/%s: %s", ns, name, exc)
+            span.record_exception(exc)
+            return None
 
 def patch_deployment(
     name: str,

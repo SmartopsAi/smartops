@@ -1,23 +1,36 @@
-fastapi
-uvicorn[standard]
+# ---------- Web ----------
+fastapi==0.115.4
+uvicorn[standard]==0.32.0
+python-multipart
+httpx
 
-# Kubernetes Client
+# ---------- Pydantic (REQUIRED for FastAPI 0.115.x) ----------
+pydantic==2.9.2
+pydantic-settings==2.6.1
+
+# ---------- Kubernetes Client ----------
 kubernetes
 pyyaml
 
-# OpenTelemetry Core
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-exporter-otlp
-opentelemetry-exporter-otlp-proto-grpc
+# ---------- OpenTelemetry Core (MUST MATCH ERP SIMULATOR) ----------
+opentelemetry-api==1.26.0
+opentelemetry-sdk==1.26.0
+opentelemetry-exporter-otlp-proto-grpc==1.26.0
 
-# Instrumentation
-opentelemetry-instrumentation
-opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-logging
-opentelemetry-instrumentation-requests
-opentelemetry-instrumentation-urllib
-prometheus-client
-prometheus_fastapi_instrumentator
+# ---------- gRPC / Protobuf (OTLP compatibility) ----------
+grpcio>=1.62.0
+protobuf>=4.25.0
 
-python-dotenv
+# ---------- Instrumentation (MUST MATCH CORE) ----------
+opentelemetry-instrumentation==0.47b0
+opentelemetry-instrumentation-fastapi==0.47b0
+opentelemetry-instrumentation-logging==0.47b0
+opentelemetry-instrumentation-requests==0.47b0
+opentelemetry-instrumentation-urllib==0.47b0
+
+# ---------- Metrics ----------
+prometheus-client==0.21.0
+prometheus-fastapi-instrumentator==6.1.0
+
+# ---------- Env ----------
+python-dotenv==1.0.1
