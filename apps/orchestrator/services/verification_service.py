@@ -16,7 +16,7 @@ from ..services import k8s_core
 logger = logging.getLogger("smartops.orchestrator.verification")
 tracer = trace.get_tracer(__name__)
 
-PROMETHEUS_API = "http://localhost/prometheus/api/v1/query"
+PROMETHEUS_API = "http://smartops-prometheus-prometheus:9090/prometheus/api/v1/query"
 
 # ERP KPI success thresholds (demo-safe)
 ERP_P95_LATENCY_OK = 1.2    # seconds
