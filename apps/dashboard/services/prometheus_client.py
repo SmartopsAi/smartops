@@ -6,14 +6,33 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
+def _env_bool(name: str, default: Optional[bool] = None) -> Optional[bool]:
+    """
+    Parse boolean env vars safely.
+    Returns:
+      - True/False if set and parseable
+      - default if not set or not parseable
+    Accepts: true/false/1/0/yes/no/on/off (case-insensitive)
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    raw = raw.strip().lower()
+    if raw in ("1", "true", "yes", "y", "on"):
+        return True
+    if raw in ("0", "false", "no", "n", "off"):
+        return False
+    return default
+
+
 class PrometheusClient:
     """
     Prometheus client for SmartOps Dashboard (progressive enhancement).
 
     Production goals:
     - Never break the UI (local mode returns safe dummy values)
-    - Enable Prometheus queries when:
-        - running in-cluster (KUBERNETES_SERVICE_HOST), OR
+    - Enable Prometheus queries only when explicitly enabled/configured:
+        - PROMETHEUS_ENABLED=true, OR
         - PROMETHEUS_URL is explicitly provided (port-forward / dev)
     - Prefer kube-state-metrics for workload health
     - Provide ERP Pilot KPIs (Odoo) via a locked PromQL contract
@@ -29,10 +48,17 @@ class PrometheusClient:
         in_cluster = bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
         explicit_prom = bool(prom_url)
 
-        # Enable Prometheus querying if in-cluster OR explicitly configured
-        self.enabled = in_cluster or explicit_prom
+        # Respect explicit enable/disable flag when present.
+        # If not present, only enable when PROMETHEUS_URL is explicitly provided.
+        enabled_flag = _env_bool("PROMETHEUS_ENABLED", default=None)
+        if enabled_flag is None:
+            self.enabled = explicit_prom
+        else:
+            self.enabled = enabled_flag or explicit_prom  # URL implies usable even if flag mis-set
 
+        # Base URL (used only if enabled, but we still set it)
         self.base_url = prom_url or (default_k8s_url if in_cluster else default_local_url)
+        self.base_url = self.base_url.rstrip("/")
 
         logger.info("PrometheusClient base_url=%s enabled=%s", self.base_url, self.enabled)
 
