@@ -1,11 +1,11 @@
-# --------------------------------------------------------
+﻿# --------------------------------------------------------
 # SmartOps ERP Simulator - Production Dockerfile
 # Python + FastAPI + Uvicorn
 # --------------------------------------------------------
 
 FROM python:3.11-slim AS base
 
-# OCI labels → required to auto-link package to SmartopsAi/smartops repo
+# OCI labels -> required to auto-link package to SmartopsAi/smartops repo
 LABEL org.opencontainers.image.source="https://github.com/SmartopsAi/smartops"
 LABEL org.opencontainers.image.description="SmartOps ERP Simulator"
 LABEL org.opencontainers.image.licenses="MIT"
@@ -31,4 +31,4 @@ COPY . .
 EXPOSE 8000
 
 # Gunicorn/Uvicorn entrypoint
-CMD ["uvicorn", "app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "erp_simulator.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

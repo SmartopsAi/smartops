@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . /app
 
-CMD ["python", "apps/agent-diagnose/integrate_with_detect.py"]
+CMD ["python", "integrate_with_detect.py"]
