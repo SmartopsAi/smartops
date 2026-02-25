@@ -17,13 +17,16 @@ class OrchestratorClient:
     """
 
     def __init__(self):
-        # Determine base URL based on environment
+        # 1) Highest priority: explicit env override (works for K8s and local)
+        orch_url = os.environ.get("ORCH_URL")
+
+        # 2) Defaults by environment (correct port is 8001 in our deployment)
         if os.environ.get("KUBERNETES_SERVICE_HOST"):
-            # Running inside Kubernetes
-            self.base_url = "http://smartops-orchestrator:8000"
+            default_url = "http://smartops-orchestrator:8001"
         else:
-            # Local development
-            self.base_url = "http://localhost:8000"
+            default_url = "http://localhost:8001"
+
+        self.base_url = (orch_url or default_url).rstrip("/")
 
         logger.info(f"OrchestratorClient initialized with base URL: {self.base_url}")
 

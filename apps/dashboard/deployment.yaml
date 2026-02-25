@@ -1,4 +1,4 @@
-apiVersion: apps/v1
+﻿apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: smartops-dashboard
@@ -22,7 +22,6 @@ spec:
           ports:
             - containerPort: 5050
 
-          # ✅ Add resource requests/limits to avoid noisy-neighbor issues
           resources:
             requests:
               cpu: "100m"
@@ -34,3 +33,19 @@ spec:
           env:
             - name: DASHBOARD_PORT
               value: "5050"
+            - name: ORCH_URL
+              value: "http://smartops-orchestrator:8001"
+            - name: POLICY_ENGINE_URL
+              value: "http://smartops-policy-engine:5051"
+            - name: PROMETHEUS_ENABLED
+              value: "false"
+
+          volumeMounts:
+            - name: runtime-data
+              mountPath: /data/runtime
+              readOnly: true
+
+      volumes:
+        - name: runtime-data
+          configMap:
+            name: smartops-runtime

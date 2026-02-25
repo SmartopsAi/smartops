@@ -23,4 +23,4 @@ RUN pip install --no-cache-dir \
 EXPOSE 5050
 
 # Start dashboard
-CMD ["python", "apps/dashboard/app.py"]
+CMD ["python", "app.py"]

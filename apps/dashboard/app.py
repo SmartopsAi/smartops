@@ -233,6 +233,6 @@ def policy_decisions():
             "events": [],
         }, 200
 
-
 port = int(os.environ.get("DASHBOARD_PORT", 5050))
-app.run(host='0.0.0.0', port=port, debug=True)
+debug = os.environ.get("DASHBOARD_DEBUG", "false").strip().lower() in ("1", "true", "yes", "y", "on")
+app.run(host="0.0.0.0", port=port, debug=debug, use_reloader=debug)
