@@ -19,9 +19,9 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: ERP_URL
-              value: "http://smartops-erp-simulator:9000"
+              value: "http://smartops-erp-simulator:8000"
             - name: ORCH_URL
-              value: "http://smartops-orchestrator:8000"
+              value: "http://smartops-orchestrator:8001"
           resources:
             limits:
               memory: "512Mi"

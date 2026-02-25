@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartops-orchestrator
+  namespace: smartops-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smartops-orchestrator
+  template:
+    metadata:
+      labels:
+        app: smartops-orchestrator
+    spec:
+      containers:
+        - name: orchestrator
+          image: smartops-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+          env:
+            - name: ORCH_PORT
+              value: "8001"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smartops-orchestrator
+  namespace: smartops-dev
+spec:
+  selector:
+    app: smartops-orchestrator
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+  type: ClusterIP
