@@ -250,7 +250,9 @@ async def check_policy(signal_obj: Any) -> PolicyDecision:
         data = resp.json()
     except Exception as exc:
         raise PolicyDecisionError(f"Invalid JSON from Policy Engine: {exc}") from exc
-
+    
+    logger.warning("POLICY_ENGINE_RESPONSE=%s", json.dumps(data, ensure_ascii=False))
+    
     pe_decision = (data.get("decision") or "").lower()
     reason = data.get("reason") or data.get("guardrail_reason") or None
     action_plan = data.get("action_plan")
