@@ -28,3 +28,5 @@ data/runtime/*.json
 # Ignore all runtime folders in submodules
 **/data/runtime/
 
+openapi.json
+policy-patch.json

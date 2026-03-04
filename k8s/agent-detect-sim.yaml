@@ -1,0 +1,43 @@
+﻿apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartops-agent-detect-sim
+  namespace: smartops-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smartops-agent-detect-sim
+  template:
+    metadata:
+      labels:
+        app: smartops-agent-detect-sim
+    spec:
+      containers:
+        - name: agent-detect
+          image: smartops-agent-detect:dev-20260304-064958
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PROFILE
+              value: simulator
+            - name: ORCH_URL
+              value: http://smartops-orchestrator:8001
+            - name: ERP_URL
+              value: http://smartops-erp-simulator:8000
+            - name: PROMETHEUS_BASE
+              value: http://kps-kube-prometheus-stack-prometheus.monitoring:9090
+            - name: METRICS_POLL_INTERVAL
+              value: "5"
+            - name: SMARTOPS_RUNTIME_DIR
+              value: /app/data/runtime
+            - name: SIM_USE_GROUND_TRUTH
+              value: "1"
+            - name: ISO_ENABLED
+              value: "0"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

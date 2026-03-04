@@ -15,11 +15,12 @@ from live_detect import LiveAnomalyDetector
 WINDOW_SECONDS = 60
 WARMUP_WINDOWS = 5
 RECOVERY_WINDOWS = 3
+SIM_USE_GROUND_TRUTH = os.getenv("SIM_USE_GROUND_TRUTH", "0") == "1"
 
 PROFILE = os.getenv("PROFILE", "simulator")  # simulator | odoo
 
 # Orchestrator endpoint (K8s default service name)
-ORCH_URL = os.getenv("ORCH_URL", "http://smartops-orchestrator:8000")
+ORCH_URL = os.getenv("ORCH_URL", "http://smartops-orchestrator:8001")
 
 # ===================================
 # INIT
@@ -27,7 +28,7 @@ ORCH_URL = os.getenv("ORCH_URL", "http://smartops-orchestrator:8000")
 window_60s = SlidingWindow(window_size_seconds=WINDOW_SECONDS)
 detector = LiveAnomalyDetector()
 
-RUNTIME_DIR = Path("data/runtime")
+RUNTIME_DIR = Path(os.getenv("SMARTOPS_RUNTIME_DIR", "/app/data/runtime"))
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 window_count = 0
@@ -38,14 +39,19 @@ last_sent_state = False  # Prevent duplicate signal spam
 # ===================================
 # HELPER: Send anomaly to orchestrator
 # ===================================
-def send_anomaly_signal(anomaly_final, risk):
+def send_anomaly_signal(service: str, anomaly_type: str, anomaly_final: bool, risk: str):
     try:
         payload = {
             "windowId": str(int(time.time())),
-            "service": "erp-simulator",
-            "type": "resource",
+            "service": service,
+            "type": anomaly_type,  # resource | error
             "score": 0.9 if anomaly_final else 0.1,
             "isAnomaly": anomaly_final,
+            "metadata": {
+                "source": "agent-detect",
+                "profile": PROFILE,
+                "risk": risk,
+            },
         }
 
         response = requests.post(
@@ -55,7 +61,7 @@ def send_anomaly_signal(anomaly_final, risk):
         )
 
         if response.status_code < 300:
-            print("[INFO] Anomaly signal sent to orchestrator")
+            print("[INFO] Anomaly signal sent to orchestrator", payload)
         else:
             print("[WARN] Orchestrator rejected signal:", response.text)
 
@@ -108,10 +114,14 @@ def main():
         # DECISION GATING
         # -------------------------------
         if PROFILE == "odoo":
-            raw_anomaly = iso_result
+            no_ep = float(metrics.get("odoo_no_endpoint", 0.0))
+            raw_anomaly = (no_ep >= 1.0)
         else:
-            raw_anomaly = iso_result or (stat_result and ground_truth_active)
-
+            # simulator
+            if SIM_USE_GROUND_TRUTH:
+                raw_anomaly = ground_truth_active or iso_result or stat_result
+            else:
+                raw_anomaly = iso_result or (stat_result and ground_truth_active)
         # -------------------------------
         # WARM-UP PROTECTION
         # -------------------------------
@@ -180,12 +190,23 @@ def main():
                 "timestamp": time.time(),
                 "profile": PROFILE
             }, f, indent=2)
+        # -------------------------------
+        # Service + type mapping (production)
+        # -------------------------------
+        service_name = "odoo" if PROFILE == "odoo" else "erp-simulator"
 
+        anomaly_type = "resource"
+        if PROFILE == "odoo":
+            try:
+                if float(metrics.get("odoo_no_endpoint", 0.0)) >= 1.0:
+                    anomaly_type = "error"
+            except Exception:
+                pass
         # -------------------------------
         # SEND TO ORCHESTRATOR (ONLY ON STATE CHANGE)
         # -------------------------------
         if anomaly_final and not last_sent_state:
-            send_anomaly_signal(anomaly_final, risk)
+            send_anomaly_signal(service_name, anomaly_type, anomaly_final, risk)
             last_sent_state = True
 
         if not anomaly_final:

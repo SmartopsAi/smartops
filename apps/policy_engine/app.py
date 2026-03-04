@@ -1,38 +1,40 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Any, Dict
 
-from fastapi import FastAPI, Body
-from fastapi.responses import PlainTextResponse
+from fastapi import Body, FastAPI, HTTPException
 
 from apps.policy_engine.repository.policy_store import load_default_policies
 from apps.policy_engine.runtime.adapter import load_runtime_signals
 from apps.policy_engine.runtime.evaluator import evaluate_policies
 from apps.policy_engine.runtime.guardrails import apply_guardrails
 
-app = FastAPI(title="SmartOps Policy Engine", version="0.4")
+app = FastAPI(title="SmartOps Policy Engine", version="0.5")
 
 # ============================================================
 # Paths + defaults
 # ============================================================
-AUDIT_PATH = Path("apps/policy_engine/audit/policy_decisions.jsonl")
+AUDIT_PATH = Path(os.getenv("POLICY_ENGINE_AUDIT_PATH", "apps/policy_engine/audit/policy_decisions.jsonl"))
 AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# ------------------------------------------------------------
-# Service → Kubernetes target mapping (CRITICAL FIX)
-# ------------------------------------------------------------
+# ============================================================
+# Service â†’ Kubernetes target mapping
+# ============================================================
+SMARTOPS_NAMESPACE = os.getenv("SMARTOPS_NAMESPACE", "smartops-dev")
+
 SERVICE_TARGETS = {
     "erp-simulator": {
         "kind": "Deployment",
-        "namespace": "smartops-dev",
+        "namespace": SMARTOPS_NAMESPACE,
         "name": "smartops-erp-simulator",
     },
     "odoo": {
         "kind": "Deployment",
-        "namespace": "smartops-dev",
+        "namespace": SMARTOPS_NAMESPACE,
         "name": "odoo-web",
     },
 }
@@ -45,12 +47,19 @@ def _utc_now() -> str:
 
 
 def _audit(event: dict) -> None:
-    with AUDIT_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    try:
+        with AUDIT_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:
+        # Audit must never break evaluation
+        pass
 
 
 def _resolve_target(signal: dict) -> dict:
-    service_name = signal.get("service") or signal["raw"].get("incoming", {}).get("service")
+    # service can exist at top-level or inside raw.incoming.service
+    raw = signal.get("raw") or {}
+    incoming = raw.get("incoming") or {}
+    service_name = signal.get("service") or incoming.get("service") or "erp-simulator"
     return SERVICE_TARGETS.get(service_name, SERVICE_TARGETS["erp-simulator"])
 
 
@@ -74,6 +83,59 @@ def _build_action_plan(chosen, signal: dict) -> dict:
     }
 
 
+def _set_anomaly_active(signal: dict) -> None:
+    """Ensure raw.detection.anomaly is True (for external evaluate calls)."""
+    signal.setdefault("raw", {})
+    signal["raw"].setdefault("detection", {})
+    signal["raw"]["detection"]["anomaly"] = True
+
+
+def _normalize_signal(signal: dict) -> None:
+    """
+    Normalize multiple payload styles into one canonical structure that the DSL expects.
+
+    Supported inputs:
+      A) Flattened keys:
+         - anomaly.type, anomaly.score
+         - k8s.replicas.current
+
+      B) Nested keys:
+         - anomaly: {type, score}
+         - k8s: {replicas: {current}}
+
+    Output:
+      signal['anomaly']['type'], signal['anomaly']['score']
+      signal['k8s']['replicas']['current']
+    """
+    # --- Flattened anomaly.* -> anomaly:{} ---
+    if "anomaly.type" in signal or "anomaly.score" in signal:
+        signal.setdefault("anomaly", {})
+        if "anomaly.type" in signal:
+            signal["anomaly"]["type"] = signal.pop("anomaly.type")
+        if "anomaly.score" in signal:
+            signal["anomaly"]["score"] = signal.pop("anomaly.score")
+
+    # --- Flattened k8s.replicas.current -> k8s:{replicas:{current}} ---
+    if "k8s.replicas.current" in signal:
+        signal.setdefault("k8s", {})
+        signal["k8s"].setdefault("replicas", {})
+        signal["k8s"]["replicas"]["current"] = signal.pop("k8s.replicas.current")
+
+    # --- If nested anomaly exists but missing keys, leave as-is ---
+    # --- If nested k8s exists but missing keys, leave as-is ---
+
+
+def _merge_raw_preserve_detection(signal: dict, raw_patch: dict) -> None:
+    """
+    Merge raw fields without losing raw.detection.anomaly.
+    """
+    base_raw = signal.get("raw") or {}
+    merged = {**base_raw, **(raw_patch or {})}
+    merged.setdefault("detection", {})
+    merged["detection"]["anomaly"] = True
+    signal["raw"] = merged
+
+
 # ============================================================
 # Core evaluation logic
 # ============================================================
@@ -81,47 +143,45 @@ def _evaluate_once(payload: dict | None = None) -> dict:
     policies = load_default_policies()
 
     # If caller provided a signal payload, evaluate ONLY that payload
-    # (do not mix with runtime adapter signals).
     if payload and isinstance(payload.get("signal"), dict) and payload["signal"]:
-        incoming_signal = payload["signal"]
+        incoming_signal: Dict[str, Any] = payload["signal"] or {}
 
-        # minimal canonical envelope so anomaly gating and target resolution work
-        signal = {
+        # minimal canonical envelope so anomaly gating + target resolution work
+        signal: Dict[str, Any] = {
             "service": payload.get("service") or incoming_signal.get("service"),
-            "raw": {
-                "incoming": payload,
-                "detection": {
-                    # Treat external evaluate payloads as "active" by default.
-                    # Orchestrator calls policy engine only when it wants a decision.
-                    "anomaly": True
-                },
-            },
+            "raw": {"incoming": payload, "detection": {"anomaly": True}},
         }
-        signal.update(incoming_signal)
+
+        # Merge all incoming keys but protect raw.detection.anomaly
+        for k, v in incoming_signal.items():
+            if k == "raw" and isinstance(v, dict):
+                _merge_raw_preserve_detection(signal, v)
+            else:
+                signal[k] = v
+
+        # External evaluate calls are considered "active anomaly" by definition
+        _set_anomaly_active(signal)
+
+        # Normalize flattened/nested representations for policy matching
+        _normalize_signal(signal)
 
     else:
         # Default behavior (no payload given): use runtime adapter
         signal = load_runtime_signals()
+        # Runtime adapter may already bring anomaly/k8s shapes; normalize anyway
+        _normalize_signal(signal)
 
-    anomaly_flag = bool(signal.get("raw", {}).get("detection", {}).get("anomaly", False))
+    anomaly_flag = bool((signal.get("raw") or {}).get("detection", {}).get("anomaly", False))
 
     if not anomaly_flag:
-        decision = {
-            "ts_utc": _utc_now(),
-            "decision": "no_action",
-            "reason": "no active anomaly",
-        }
+        decision = {"ts_utc": _utc_now(), "decision": "no_action", "reason": "no active anomaly"}
         _audit(decision)
         return decision
 
     chosen = evaluate_policies(policies, signal)
 
     if not chosen:
-        decision = {
-            "ts_utc": _utc_now(),
-            "decision": "no_action",
-            "reason": "no policy matched",
-        }
+        decision = {"ts_utc": _utc_now(), "decision": "no_action", "reason": "no policy matched"}
         _audit(decision)
         return decision
 
@@ -151,16 +211,23 @@ def healthz():
 
 @app.post("/v1/policy/evaluate")
 def evaluate(payload: dict = Body(default={})):
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload must be a JSON object")
     return _evaluate_once(payload)
 
 
 @app.get("/v1/policy/audit/latest")
 def audit_latest(n: int = 20):
-    if not AUDIT_PATH.exists():
-        return {"ok": True, "events": []}
+    if n <= 0:
+        return {"ok": True, "returned": 0, "events": []}
 
-    lines = AUDIT_PATH.read_text(encoding="utf-8").splitlines()
-    tail = lines[-max(1, n):]
+    if not AUDIT_PATH.exists():
+        return {"ok": True, "returned": 0, "events": []}
+
+    lines = AUDIT_PATH.read_text(encoding="utf-8", errors="ignore").splitlines()
+    tail = lines[-max(1, n) :]
 
     events = []
     for ln in tail:
