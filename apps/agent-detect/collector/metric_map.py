@@ -16,55 +16,78 @@ SIMULATOR_PROFILE_METRICS = {
 # ================================
 # Odoo ERP profile (ingress-based)
 # ================================
+# NOTE:
+# In your current ingress-nginx metrics endpoint, the usual per-request metrics
+# (nginx_ingress_controller_requests / request_duration_seconds_bucket) are NOT exposed.
+# But the controller DOES expose a strong production signal:
+#   nginx_ingress_controller_orphan_ingress{ingress="odoo-ingress", namespace="smartops-dev", type="no-endpoint"} == 1
+# This reliably indicates "Ingress has no endpoints" (service down / selector mismatch / scaled to 0).
 ODOO_PROFILE_METRICS = {
-    # Request rate (RPS)
-    "erp_req_rate": {
+    # ----------------------------
+    # Primary production signal
+    # ----------------------------
+    "odoo_no_endpoint": {
         "type": "promql",
         "query": """
-        sum(
-          rate(
-            nginx_ingress_controller_requests{
-              host="odoo.localhost",
-              exported_namespace="smartops-dev"
-            }[1m]
-          )
+        max(
+          nginx_ingress_controller_orphan_ingress{
+            ingress="odoo-ingress",
+            exported_namespace="smartops-dev",
+            type="no-endpoint"
+          }
         )
-        """
+        """,
     },
 
-    # 5xx error rate
-    "erp_5xx_rate": {
-        "type": "promql",
-        "query": """
-        sum(
-          rate(
-            nginx_ingress_controller_requests{
-              host="odoo.localhost",
-              exported_namespace="smartops-dev",
-              status=~"5.."
-            }[1m]
-          )
-        )
-        """
-    },
-
-    # p95 latency (seconds)
-    "erp_p95_latency": {
-        "type": "promql",
-        "query": """
-        histogram_quantile(
-          0.95,
-          sum by (le) (
-            rate(
-              nginx_ingress_controller_request_duration_seconds_bucket{
-                host="odoo.localhost",
-                exported_namespace="smartops-dev"
-              }[2m]
-            )
-          )
-        )
-        """
-    }
+    # ----------------------------
+    # Optional future metrics
+    # (Enable once request/latency metrics exist in Prometheus)
+    # ----------------------------
+    # "erp_req_rate": {
+    #     "type": "promql",
+    #     "query": """
+    #     sum(
+    #       rate(
+    #         nginx_ingress_controller_requests{
+    #           host="odoo.localhost",
+    #           exported_namespace="smartops-dev"
+    #         }[1m]
+    #       )
+    #     )
+    #     """,
+    # },
+    #
+    # "erp_5xx_rate": {
+    #     "type": "promql",
+    #     "query": """
+    #     sum(
+    #       rate(
+    #         nginx_ingress_controller_requests{
+    #           host="odoo.localhost",
+    #           exported_namespace="smartops-dev",
+    #           status=~"5.."
+    #         }[1m]
+    #       )
+    #     )
+    #     """,
+    # },
+    #
+    # "erp_p95_latency": {
+    #     "type": "promql",
+    #     "query": """
+    #     histogram_quantile(
+    #       0.95,
+    #       sum by (le) (
+    #         rate(
+    #           nginx_ingress_controller_request_duration_seconds_bucket{
+    #             host="odoo.localhost",
+    #             exported_namespace="smartops-dev"
+    #           }[2m]
+    #         )
+    #       )
+    #     )
+    #     """,
+    # },
 }
 
 # ================================

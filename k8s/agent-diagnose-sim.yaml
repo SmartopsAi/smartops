@@ -1,0 +1,33 @@
+﻿apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartops-agent-diagnose-sim
+  namespace: smartops-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smartops-agent-diagnose-sim
+  template:
+    metadata:
+      labels:
+        app: smartops-agent-diagnose-sim
+    spec:
+      containers:
+        - name: agent-diagnose
+          image: smartops-agent-diagnose:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ERP_URL
+              value: http://smartops-erp-simulator:8000
+            - name: ORCH_URL
+              value: http://smartops-orchestrator:8001
+            - name: TARGET_SERVICE
+              value: erp-simulator
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

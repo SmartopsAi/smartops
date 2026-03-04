@@ -15,7 +15,7 @@ POLICY "scale_up_on_anomaly_resource_step_2":
 
 POLICY "restart_on_anomaly_error":
   WHEN anomaly.type == "error"
-       AND anomaly.score >= 0.95
+       AND anomaly.score >= 0.9
   THEN restart(service)
   PRIORITY 250
 

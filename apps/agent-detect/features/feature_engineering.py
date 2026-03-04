@@ -1,10 +1,11 @@
 import numpy as np
 import json
 import os
-import os
+from pathlib import Path
 
-# Ensure runtime directory exists (for dashboard & prediction)
-os.makedirs("data/runtime", exist_ok=True)
+# Single source of truth for runtime output (dashboard uses this)
+RUNTIME_DIR = Path(os.getenv("SMARTOPS_RUNTIME_DIR", "/app/data/runtime"))
+RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 # ================================
 # Profile-aware metric selection
@@ -20,7 +21,10 @@ SIMULATOR_METRICS = [
     "modes_enabled",
 ]
 
+# Odoo metrics collected via PromQL (see collector/metric_map.py)
 ODOO_METRICS = [
+    "odoo_no_endpoint",   # primary production signal (ingress no-endpoint)
+    # Optional future metrics (enable when request/latency series exist):
     "erp_req_rate",
     "erp_5xx_rate",
     "erp_p95_latency",
@@ -29,7 +33,8 @@ ODOO_METRICS = [
 
 def extract_metric_series(window_values, metric_name):
     """
-    Extract a time-series list for a single metric from window data
+    Extract a time-series list for a single metric from window data.
+    Keeps only entries that contain the key (avoid artificial zeros).
     """
     return [
         entry.get(metric_name, 0.0)
@@ -40,7 +45,7 @@ def extract_metric_series(window_values, metric_name):
 
 def compute_features(series):
     """
-    Compute statistical & temporal features from a numeric series
+    Compute statistical & temporal features from a numeric series.
     """
     if len(series) < 2:
         return None
@@ -70,14 +75,10 @@ def compute_features(series):
 
 def build_feature_vector(window_values):
     """
-    Build full feature vector for selected metrics
-    Also saves latest feature vector for dashboard & prediction preview
+    Build full feature vector for selected metrics.
+    Also saves latest feature vector for dashboard & prediction preview.
     """
-
-    if PROFILE == "odoo":
-        metrics = ODOO_METRICS
-    else:
-        metrics = SIMULATOR_METRICS
+    metrics = ODOO_METRICS if PROFILE == "odoo" else SIMULATOR_METRICS
 
     feature_vector = {}
 
@@ -95,7 +96,7 @@ def build_feature_vector(window_values):
     # SAVE latest features (dashboard & prediction preview)
     # -------------------------------
     if feature_vector:
-        with open("data/runtime/latest_features.json", "w") as f:
+        with open(RUNTIME_DIR / "latest_features.json", "w") as f:
             json.dump(feature_vector, f, indent=2)
 
     return feature_vector
