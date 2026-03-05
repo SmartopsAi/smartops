@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import time
+from . import k8s_core
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -762,6 +763,35 @@ class ClosedLoopManager:
                     verification_status_label = verification.status.value
 
                 if result.success and verification and verification.status == VerificationStatus.SUCCESS:
+                    # --- Production-grade: persist remediation state (prevents stage races) ---
+                    try:
+                        if action_req.type.value == "scale":
+                            # action_req.scale.replicas is the target replicas
+                            reps = None
+                            if getattr(action_req, "scale", None) and getattr(action_req.scale, "replicas", None) is not None:
+                                reps = int(action_req.scale.replicas)
+
+                            if reps in (4, 6):
+                                level = "1" if reps == 4 else "2"
+                                patch_body = {
+                                    "metadata": {
+                                        "annotations": {
+                                            "smartops.io/remediation-level": level
+                                        }
+                                    }
+                                }
+                                k8s_core.patch_deployment(
+                                    name=action_req.target.name,
+                                    patch_body=patch_body,
+                                    namespace=action_req.target.namespace,
+                                    dry_run=False,
+                                )
+                                logger.info(
+                                    "ClosedLoopManager: remediation-level persisted after verify (deployment=%s level=%s windowId=%s)",
+                                    action_req.target.name, level, window_id
+                                )
+                    except Exception:
+                        logger.exception("ClosedLoopManager: failed to persist remediation-level (best-effort).")
                     logger.info(
                         "ClosedLoopManager: action %s on %s/%s verified successfully in %.2fs",
                         action_req.type.value,

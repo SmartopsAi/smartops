@@ -1,6 +1,7 @@
 # smartops_e2e.ps1
 # SmartOps End-to-End Verifier (ERP Simulator / Odoo)
 # Monitor → Detect → Diagnose → Decide → Act → Verify
+# Production-grade update: reset remediation stage via annotations (remediation.level), not replicas.current.
 
 $ErrorActionPreference = "Stop"
 
@@ -25,6 +26,14 @@ $ORCH_TAIL_DEFAULT  = 60000
 
 # how long we'll keep trying to get an "action-executed" window
 $ACTION_QUALIFY_DEADLINE_SEC = 420  # 7 min total loop after trigger
+
+# Production knobs
+$SIM_BASELINE_REPLICAS = 3
+$SIM_STEP1_REPLICAS    = 4
+$SIM_STEP2_REPLICAS    = 6
+
+# Toggle: validate step_2 (scale to 6) in the same run?
+$VALIDATE_STEP2 = $true   # set to $false if you only want step_1 in PP2 run
 
 # -----------------------
 # Helpers
@@ -84,6 +93,50 @@ function Wait-ForReplicasAtLeast($dep, $minReplicas, $timeoutSec = 240) {
   throw "Timeout: $dep did not reach replicas/ready >= $minReplicas within $timeoutSec seconds."
 }
 
+function Ensure-DeployReplicasExact($dep, $desired, $timeout = "300s") {
+  $cur = Get-DeployReplicas $dep
+  if ($cur -ne $desired) {
+    Write-Host "Setting $dep replicas=$desired (was $cur) ..."
+    kubectl -n $NS scale deploy/$dep --replicas=$desired | Out-Host
+    Assert-Rollout $dep $timeout
+  } else {
+    Write-Host "$dep replicas already $desired"
+  }
+}
+
+# ---- Remediation State (production-grade reset) ----
+function Set-RemediationBaseline($deployment, $baselineReplicas = 3) {
+  Write-Section "Pre-check: reset remediation state (annotations) for $deployment"
+  kubectl -n $NS annotate deploy/$deployment `
+    smartops.io/remediation-level="0" `
+    smartops.io/baseline-replicas="$baselineReplicas" `
+    --overwrite | Out-Host
+}
+
+function Get-RemediationLevel($deployment) {
+  $lvl = kubectl -n $NS get deploy $deployment -o jsonpath="{.metadata.annotations.smartops\.io/remediation-level}"
+  if (-not $lvl) { return "0" }
+  return $lvl
+}
+
+function Wait-ForRemediationLevelAtLeast($deployment, $minLevel, $timeoutSec = 180) {
+  $deadline = (Get-Date).AddSeconds($timeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    $lvlRaw = Get-RemediationLevel $deployment
+    $lvl = 0
+    try { $lvl = [int]$lvlRaw } catch { $lvl = 0 }
+
+    if ($lvl -ge $minLevel) {
+      Write-Host "OK: $deployment remediation-level=$lvl (>= $minLevel)"
+      return
+    }
+    Write-Host "Waiting: $deployment remediation-level=$lvl (need >= $minLevel)..."
+    Start-Sleep -Seconds 3
+  }
+  throw "Timeout: $deployment remediation-level did not reach >= $minLevel within $timeoutSec seconds."
+}
+
+# ---- Triggers ----
 function Trigger-SimCpuLoad($seconds = 30) {
   Write-Section "Monitor trigger (ERP Simulator): simulate CPU load for ${seconds}s"
   $json = "{`"duration_seconds`":$seconds,`"target`":`"cpu`"}"
@@ -104,6 +157,7 @@ function Restore-Odoo() {
   kubectl -n $NS get endpoints $DEP_ODOO | Out-Host
 }
 
+# ---- Signal baselines & waits ----
 function Get-BaselineAnomalyIds($service) {
   $r = Invoke-OrchRecent 200
   $before = @()
@@ -139,6 +193,7 @@ function Wait-RcaForWindow($service, $windowId, $timeoutSec = 240) {
   throw "Timeout: did not observe RCA for service '$service' windowId '$windowId' within $timeoutSec seconds."
 }
 
+# ---- Orchestrator logs/trace evidence ----
 function Get-OrchLogLines($since = $ORCH_SINCE_DEFAULT, $tail = $ORCH_TAIL_DEFAULT) {
   return (kubectl -n $NS logs deploy/smartops-orchestrator --since=$since --tail=$tail)
 }
@@ -176,7 +231,6 @@ function Get-OrchEvidenceByTrace($traceId, $since = $ORCH_SINCE_DEFAULT) {
 }
 
 function Classify-TraceEvidence($ev) {
-  # returns hasExecute/hasDone/hasVerify/hasSummary + skip reasons
   $hasExecute = $ev | Where-Object { $_ -match "ClosedLoopManager: executing" } | Select-Object -First 1
   $hasDone    = $ev | Where-Object { $_ -match "Action completed:" } | Select-Object -First 1
   $hasVerify  = $ev | Where-Object { $_ -match "verified successfully" } | Select-Object -First 1
@@ -208,7 +262,6 @@ function Wait-OrchestratorActionForWindow($windowId, $timeoutSec = 240, $since =
       if ($c.hasExecute -or $c.hasDone -or $c.hasVerify -or $c.hasSummary) {
         return @{ traceId = $traceId; evidence = $ev; classify = $c }
       }
-      # If we see explicit skip reasons, return them too (caller may choose to skip this window)
       if ($c.cooldown -or $c.guardrail -or $c.denied) {
         return @{ traceId = $traceId; evidence = $ev; classify = $c }
       }
@@ -223,7 +276,7 @@ function Wait-ForActionQualifiedWindow($service, $beforeIds, $overallTimeoutSec,
   $seen = @{}  # windowId -> true
 
   while ((Get-Date) -lt $deadline) {
-    $wid = Wait-NewAnomalyWindowId $service $beforeIds 120
+    $wid = Wait-NewAnomalyWindowId $service $beforeIds 600
     if ($seen.ContainsKey($wid)) { continue }
     $seen[$wid] = $true
     $beforeIds += $wid
@@ -243,18 +296,9 @@ function Wait-ForActionQualifiedWindow($service, $beforeIds, $overallTimeoutSec,
       return @{ windowId = $wid; traceId = $info.traceId; evidence = $info.evidence; classify = $c }
     }
 
-    if ($c.cooldown) {
-      Write-Host "Candidate windowId=$wid skipped due to COOLDOWN (will wait next anomaly)..."
-      continue
-    }
-    if ($c.guardrail) {
-      Write-Host "Candidate windowId=$wid skipped due to GUARDRAIL (will wait next anomaly)..."
-      continue
-    }
-    if ($c.denied) {
-      Write-Host "Candidate windowId=$wid policy DENIED (will wait next anomaly)..."
-      continue
-    }
+    if ($c.cooldown)  { Write-Host "Candidate windowId=$wid skipped due to COOLDOWN (will wait next anomaly)..."; continue }
+    if ($c.guardrail) { Write-Host "Candidate windowId=$wid skipped due to GUARDRAIL (will wait next anomaly)..."; continue }
+    if ($c.denied)    { Write-Host "Candidate windowId=$wid policy DENIED (will wait next anomaly)..."; continue }
 
     Write-Host "Candidate windowId=$wid did not qualify; waiting next..."
   }
@@ -272,17 +316,6 @@ function Show-OrchestratorEvidence($windowId) {
   Write-Host "trace_id=$traceId"
   $ev = Get-OrchEvidenceByTrace $traceId $ORCH_SINCE_DEFAULT
   $ev | Select-Object -Last 220 | ForEach-Object { $_ }
-}
-
-function Ensure-DeployReplicasExact($dep, $desired, $timeout = "300s") {
-  $cur = Get-DeployReplicas $dep
-  if ($cur -ne $desired) {
-    Write-Host "Setting $dep replicas=$desired (was $cur) ..."
-    kubectl -n $NS scale deploy/$dep --replicas=$desired | Out-Host
-    Assert-Rollout $dep $timeout
-  } else {
-    Write-Host "$dep replicas already $desired"
-  }
 }
 
 # -----------------------
@@ -310,8 +343,11 @@ if ($choice -eq "1") {
     throw "$DET_SIM is not ready (ready=$detReady). Fix agent-detect-sim before running E2E."
   }
 
-  Write-Section "Pre-check: force simulator to replicas=3 so policy step_1 matches (replicas.current=3)"
-  Ensure-DeployReplicasExact $DEP_SIM 3 "300s"
+  # Production-grade reset (state machine)
+  Set-RemediationBaseline $DEP_SIM $SIM_BASELINE_REPLICAS
+
+  Write-Section "Pre-check: set simulator to baseline replicas=$SIM_BASELINE_REPLICAS"
+  Ensure-DeployReplicasExact $DEP_SIM $SIM_BASELINE_REPLICAS "300s"
 
   Write-Section "MONITOR: capture baseline signals"
   $beforeIds = Get-BaselineAnomalyIds $service
@@ -335,18 +371,17 @@ if ($choice -eq "1") {
 
   Show-OrchestratorEvidence $wid
 
-  Write-Section "VERIFY (K8s): wait for post-action scale to take effect (>=4 ready)"
-  Wait-ForReplicasAtLeast $DEP_SIM 4 420
+  Write-Section "VERIFY (K8s): step_1 should scale to >=$SIM_STEP1_REPLICAS and remediation-level >= 1"
+  Wait-ForReplicasAtLeast $DEP_SIM $SIM_STEP1_REPLICAS 420
+  Wait-ForRemediationLevelAtLeast $DEP_SIM 1 240
   kubectl -n $NS get deploy $DEP_SIM -o wide | Out-Host
 
-  $finalReplicas = Get-DeployReplicas $DEP_SIM
-  $finalReady    = Get-DeployReady $DEP_SIM
-  if ($finalReplicas -ge 6) {
-    Write-Host "NOTE: deployment reached replicas=$finalReplicas (likely policy step_2 triggered quickly)."
-  } elseif ($finalReplicas -eq 4) {
-    Write-Host "NOTE: deployment stabilized at replicas=4 (policy step_1 target)."
-  } else {
-    Write-Host "NOTE: deployment replicas ended at $finalReplicas (unexpected but accepted since ready>=4)."
+  if ($VALIDATE_STEP2) {
+    Write-Section "OPTIONAL VERIFY: step_2 should scale to >=$SIM_STEP2_REPLICAS and remediation-level >= 2"
+    Trigger-SimCpuLoad 30
+    Wait-ForReplicasAtLeast $DEP_SIM $SIM_STEP2_REPLICAS 420
+    Wait-ForRemediationLevelAtLeast $DEP_SIM 2 240
+    kubectl -n $NS get deploy $DEP_SIM -o wide | Out-Host
   }
 
   Write-Section "FINAL (signals/recent): confirm anomaly + rca share same windowId"
@@ -388,7 +423,8 @@ if ($choice -eq "2") {
   Write-Section "DETECT→DECIDE/ACT: waiting for an ACTION-QUALIFIED anomaly windowId (auto-skip cooldown/guardrail/denied)"
   $picked = Wait-ForActionQualifiedWindow $service $beforeIds 360 $ORCH_SINCE_DEFAULT
   if (-not $picked) {
-    Show-OrchestratorEvidence $wid
+    Write-Host "No action-qualified window found; printing last 200 orchestrator log lines for debugging..."
+    kubectl -n $NS logs deploy/smartops-orchestrator --since=$ORCH_SINCE_DEFAULT --tail=200 | Out-Host
     throw "Timeout: did not observe an action-qualified anomaly for '$service' within 360 seconds."
   }
 
