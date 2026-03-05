@@ -2,6 +2,7 @@ import logging
 import random
 import time
 from typing import Any, Callable, Dict, Optional
+from . import k8s_core
 
 from opentelemetry import trace
 from ..config import settings  # NEW: replica guardrails
@@ -181,6 +182,32 @@ class ActionRunner:
                     )
                     span.set_attribute("smartops.action.status", "success")
                     span.set_attribute("smartops.action.attempts", attempts)
+
+                    # Best-effort: advance remediation stage for policy state machine
+                    try:
+                        if action_type == "scale":
+                            replicas = kwargs.get("replicas")
+                            dep_name = kwargs.get("name")
+                            ns = kwargs.get("namespace")
+                            if isinstance(replicas, int) and dep_name:
+                                if replicas == 4:
+                                    level = "1"
+                                elif replicas == 6:
+                                    level = "2"
+                                else:
+                                    level = None
+
+                                if level is not None:
+                                    patch_body = {
+                                        "metadata": {"annotations": {"smartops.io/remediation-level": level}}
+                                    }
+                                    k8s_core.patch_deployment(dep_name, patch_body, namespace=ns, dry_run=False)
+                                    logger.info(
+                                        "Remediation level updated: deployment=%s namespace=%s remediation-level=%s",
+                                        dep_name, ns, level
+                                    )
+                    except Exception:
+                        logger.exception("Failed to update remediation-level annotation (best-effort).")
 
                     return {
                         "status": "success",

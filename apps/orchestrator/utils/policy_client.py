@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass, asdict, is_dataclass
 from enum import Enum
 from typing import Optional, Any, Dict
+from ..services.k8s_core import get_deployment_replicas, get_deployment_annotation
 
 import httpx
 
@@ -175,8 +176,6 @@ def _normalize_signal_fields(d: Dict[str, Any]) -> Dict[str, Any]:
 
     return out
 
-# policy_client.py
-from apps.orchestrator.services.k8s_core import get_deployment_replicas
 
 SERVICE_TO_DEPLOYMENT = {
     "erp-simulator": "smartops-erp-simulator",
@@ -216,9 +215,23 @@ def _build_policy_payload(signal_obj: Any) -> Dict[str, Any]:
             cur = get_deployment_replicas(dep, SMARTOPS_NS)
             if cur is not None:
                 signal["k8s.replicas.current"] = int(cur)
+
+            # Stable remediation stage (do NOT infer from replicas.current)
+            lvl_raw = get_deployment_annotation(dep, "smartops.io/remediation-level", SMARTOPS_NS)
+            try:
+                signal["remediation.level"] = int(lvl_raw) if lvl_raw is not None else 0
+            except Exception:
+                signal["remediation.level"] = 0
+
+            # Optional baseline replicas (used for recovery / reset)
+            base_raw = get_deployment_annotation(dep, "smartops.io/baseline-replicas", SMARTOPS_NS)
+            try:
+                if base_raw is not None:
+                    signal["baseline.replicas"] = int(base_raw)
+            except Exception:
+                pass
     except Exception:
         pass
-
 
     return {"service": service, "signal": signal}
 

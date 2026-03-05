@@ -508,7 +508,50 @@ def get_deployment_replicas(
             logger.error("Unexpected error reading deployment replicas %s/%s: %s", ns, name, exc)
             span.record_exception(exc)
             return None
+        
+def get_deployment_annotation(
+    name: str,
+    key: str,
+    namespace: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Return a Deployment annotation value (metadata.annotations[key]).
+    Used for stable policy state (e.g., remediation level, baseline replicas).
+    """
+    ns = _resolve_namespace(namespace)
+    labels = {"verb": "read", "resource": "deployment", "namespace": ns}
 
+    with tracer.start_as_current_span("k8s.get_deployment_annotation") as span:
+        span.set_attribute("smartops.k8s.deployment", name)
+        span.set_attribute("smartops.k8s.namespace", ns)
+        span.set_attribute("smartops.k8s.annotation_key", key)
+
+        _, apps_v1 = _clients()
+        start = time.time()
+        try:
+            dep = apps_v1.read_namespaced_deployment(name=name, namespace=ns)
+            duration = time.time() - start
+
+            K8S_API_CALLS_TOTAL.labels(**labels).inc()
+            K8S_API_LATENCY_SECONDS.labels(**labels).observe(duration)
+
+            ann = (dep.metadata.annotations or {})
+            return ann.get(key)
+
+        except ApiException as exc:
+            duration = time.time() - start
+            K8S_API_CALLS_TOTAL.labels(**labels).inc()
+            K8S_API_LATENCY_SECONDS.labels(**labels).observe(duration)
+            K8S_API_ERRORS_TOTAL.labels(**labels).inc()
+
+            logger.error("Error reading deployment annotation %s/%s key=%s: %s", ns, name, key, exc)
+            span.record_exception(exc)
+            return None
+        except Exception as exc:
+            logger.error("Unexpected error reading deployment annotation %s/%s key=%s: %s", ns, name, key, exc)
+            span.record_exception(exc)
+            return None
+        
 def patch_deployment(
     name: str,
     patch_body: Dict[str, Any],
