@@ -59,6 +59,8 @@ class PrometheusClient:
         # Base URL (used only if enabled, but we still set it)
         self.base_url = prom_url or (default_k8s_url if in_cluster else default_local_url)
         self.base_url = self.base_url.rstrip("/")
+        self.odoo_host = os.environ.get("ODOO_INGRESS_HOST", "odoo.localhost")
+        self.odoo_namespace = os.environ.get("SMARTOPS_NAMESPACE", "smartops-dev")
 
         logger.info("PrometheusClient base_url=%s enabled=%s", self.base_url, self.enabled)
 
@@ -172,8 +174,8 @@ class PrometheusClient:
         Returns the locked Odoo KPI contract values.
 
         Filters:
-          host="odoo.localhost"
-          exported_namespace="smartops-dev"
+          host="{self.odoo_host}"
+          exported_namespace="{self.odoo_namespace}"
 
         KPIs:
           - request_rate_rps
@@ -191,37 +193,37 @@ class PrometheusClient:
                 "source": "dummy_local",
             }
 
-        req_rate_q = """
+        req_rate_q = f"""
         sum(
           rate(
             nginx_ingress_controller_requests{
-              host="odoo.localhost",
-              exported_namespace="smartops-dev"
+              host="{self.odoo_host}",
+              exported_namespace="{self.odoo_namespace}"
             }[1m]
           )
         )
         """
 
-        err_5xx_q = """
+        err_5xx_q = f"""
         sum(
           rate(
             nginx_ingress_controller_requests{
-              host="odoo.localhost",
-              exported_namespace="smartops-dev",
+              host="{self.odoo_host}",
+              exported_namespace="{self.odoo_namespace}",
               status=~"5.."
             }[1m]
           )
         )
         """
 
-        p95_latency_s_q = """
+        p95_latency_s_q = f"""
         histogram_quantile(
           0.95,
           sum by (le) (
             rate(
               nginx_ingress_controller_request_duration_seconds_bucket{
-                host="odoo.localhost",
-                exported_namespace="smartops-dev"
+                host="{self.odoo_host}",
+                exported_namespace="{self.odoo_namespace}"
               }[2m]
             )
           )

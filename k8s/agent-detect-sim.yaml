@@ -1,4 +1,4 @@
-﻿apiVersion: apps/v1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: smartops-agent-detect-sim
@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: agent-detect
-          image: smartops-agent-detect:dev-20260304-064958
+          image: REGISTRY_PLACEHOLDER/smartops-agent-detect:cloud-latest
           imagePullPolicy: IfNotPresent
           env:
             - name: PROFILE
@@ -41,3 +41,4 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+

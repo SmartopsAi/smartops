@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: policy-engine
-          image: smartops-policy-engine:latest
+          image: REGISTRY_PLACEHOLDER/smartops-policy-engine:cloud-latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8002
@@ -41,3 +41,4 @@ spec:
     - name: http
       port: 5051
       targetPort: 8002
+

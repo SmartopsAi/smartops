@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: dashboard-api
-          image: smartops-dashboard-api:latest
+          image: REGISTRY_PLACEHOLDER/smartops-dashboard-api:cloud-latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5050

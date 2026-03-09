@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: orchestrator
-          image: smartops-orchestrator:latest
+          image: REGISTRY_PLACEHOLDER/smartops-orchestrator:cloud-latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8001
@@ -48,3 +48,4 @@ spec:
       port: 8001
       targetPort: 8001
   type: ClusterIP
+

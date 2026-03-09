@@ -1,4 +1,4 @@
-﻿apiVersion: apps/v1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: smartops-agent-diagnose-odoo
@@ -15,11 +15,11 @@ spec:
     spec:
       containers:
         - name: agent-diagnose
-          image: smartops-agent-diagnose:latest
+          image: REGISTRY_PLACEHOLDER/smartops-agent-diagnose:cloud-latest
           imagePullPolicy: IfNotPresent
           env:
             - name: ERP_URL
-              value: http://smartops-erp-simulator:8000
+              value: http://odoo-web:8069
             - name: ORCH_URL
               value: http://smartops-orchestrator:8001
             - name: TARGET_SERVICE
@@ -31,3 +31,5 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+
+

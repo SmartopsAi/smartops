@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: dashboard-ui
-          image: smartops-dashboard-ui:latest
+          image: REGISTRY_PLACEHOLDER/smartops-dashboard-ui:cloud-latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80

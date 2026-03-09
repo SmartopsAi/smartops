@@ -26,6 +26,9 @@ PROMETHEUS_API = os.getenv(
 ERP_P95_LATENCY_OK = 1.2    # seconds
 ERP_5XX_RATE_OK = 0.1       # req/s
 
+ODOO_INGRESS_HOST = os.getenv("ODOO_INGRESS_HOST", "odoo.localhost")
+SMARTOPS_NAMESPACE = os.getenv("SMARTOPS_NAMESPACE", "smartops-dev")
+
 
 def query_prometheus(promql: str) -> float:
     resp = requests.get(PROMETHEUS_API, params={"query": promql}, timeout=5)
@@ -41,14 +44,14 @@ def verify_erp_kpis() -> bool:
     Verify ERP health after an action using Prometheus KPIs.
     """
     latency = query_prometheus(
-        """
+        f"""
         histogram_quantile(
           0.95,
           sum by (le) (
             rate(
               nginx_ingress_controller_request_duration_seconds_bucket{
-                host="odoo.localhost",
-                exported_namespace="smartops-dev"
+                host="{ODOO_INGRESS_HOST}",
+                exported_namespace="{SMARTOPS_NAMESPACE}"
               }[2m]
             )
           )
@@ -57,12 +60,12 @@ def verify_erp_kpis() -> bool:
     )
 
     errors = query_prometheus(
-        """
+        f"""
         sum(
           rate(
             nginx_ingress_controller_requests{
-              host="odoo.localhost",
-              exported_namespace="smartops-dev",
+              host="{ODOO_INGRESS_HOST}",
+              exported_namespace="{SMARTOPS_NAMESPACE}",
               status=~"5.."
             }[1m]
           )
@@ -179,3 +182,5 @@ async def verify_deployment_rollout(
             available_replicas=available,
             details=last,
         )
+
+

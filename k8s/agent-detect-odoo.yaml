@@ -1,4 +1,4 @@
-﻿apiVersion: apps/v1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: smartops-agent-detect-odoo
@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: agent-detect
-          image: smartops-agent-detect:dev-20260304-035756
+          image: REGISTRY_PLACEHOLDER/smartops-agent-detect:cloud-latest
           imagePullPolicy: IfNotPresent
           env:
             - name: PROFILE
@@ -23,7 +23,7 @@ spec:
             - name: ORCH_URL
               value: http://smartops-orchestrator:8001
             - name: ERP_URL
-              value: http://smartops-erp-simulator:8000
+              value: http://odoo-web:8069
             - name: PROMETHEUS_BASE
               value: http://kps-kube-prometheus-stack-prometheus.monitoring:9090
             - name: METRICS_POLL_INTERVAL
@@ -39,3 +39,5 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+
+
