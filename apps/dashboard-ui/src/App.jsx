@@ -107,13 +107,6 @@ function App() {
       return;
     }
 
-    if (scenarioKey === "scenario-3") {
-      setActionError(
-        "Scenario 3 still needs live guardrail capture. Scenario 1 and Scenario 2 are wired for full live execution."
-      );
-      return;
-    }
-
     try {
       setRunningScenario(scenarioKey);
       setActionError("");
@@ -135,19 +128,26 @@ function App() {
       if (!result.windowId) {
         throw new Error("Scenario ran but no bound windowId was returned from the backend.");
       }
+    setSelectedWindowId(result.windowId);
+    const scenarioLabel =
+      scenarioKey === "scenario-1"
+        ? "Scenario 1"
+        : scenarioKey === "scenario-2"
+        ? "Scenario 2"
+        : "Scenario 3";
 
-      setSelectedWindowId(result.windowId);
+    const decision = String(result?.policy?.decision || "").toLowerCase();
+    const guardrail = result?.policy?.guardrail_reason || result?.policy?.guardrail;
 
-      const scenarioLabel =
-        scenarioKey === "scenario-1"
-          ? "Scenario 1"
-          : scenarioKey === "scenario-2"
-          ? "Scenario 2"
-          : scenarioKey;
-
+    if (scenarioKey === "scenario-3" && decision === "blocked") {
+      setActionMessage(
+        `${scenarioLabel} completed and the dashboard is now bound to live window ${result.windowId}. Repeated restart was blocked by guardrails${guardrail ? ` (${guardrail})` : ""}.`
+      );
+    } else {
       setActionMessage(
         `${scenarioLabel} completed and the dashboard is now bound to live window ${result.windowId}.`
       );
+    }
 
       await loadDashboardState(false, {
         scenarioKey,
@@ -629,10 +629,10 @@ function App() {
               ) : !currentScenarioEvidence ? (
                 <div className="empty-state">
                   <h3>No bound live scenario yet</h3>
-                  <p>
-                    Run Scenario 1 or Scenario 2 from Section C2. The whole dashboard
-                    will then bind to that exact live window.
-                  </p>
+                    <p>
+                      Run Scenario 1, Scenario 2, or Scenario 3 from Section C2. The whole dashboard
+                      will then bind to that exact live window.
+                    </p>
                 </div>
               ) : (
                 <div className="scenario-grid">
@@ -650,11 +650,11 @@ function App() {
                       Window IDs: {currentScenarioEvidence.windowIds.join(", ")}
                     </p>
                     <p>Service: {currentScenarioEvidence.service}</p>
-                    <p>
-                      Anomaly: {currentScenarioEvidence.anomalyType || "Not available"} | Policy:{" "}
-                      {currentScenarioEvidence.policy || "Not available"} | Action:{" "}
-                      {currentScenarioEvidence.action || "Not available"}
-                    </p>
+                      <p>
+                        Anomaly: {currentScenarioEvidence.anomalyType || "Not available"} | Policy:{" "}
+                        {currentScenarioEvidence.policy || "Not available"} | Action:{" "}
+                        {currentScenarioEvidence.action || "Blocked before execution"}
+                      </p>
                     {typeof currentScenarioEvidence.targetReplicas !== "undefined" &&
                     currentScenarioEvidence.targetReplicas !== null ? (
                       <p>Target replicas: {currentScenarioEvidence.targetReplicas}</p>
@@ -674,6 +674,8 @@ function App() {
                         ? currentScenarioEvidence.verifyRequested
                           ? "Requested"
                           : "Not requested"
+                        : currentScenarioEvidence.decision === "blocked"
+                        ? "Not required"
                         : "Not available"}
                     </p>
                   </article>
@@ -720,10 +722,13 @@ function App() {
                             : "Run Scenario 2 / Error anomaly to restart"}
                         </button>
                         <button
-                          className="action-button"
+                          className="action-button action-button--primary"
                           onClick={() => runLiveScenario("scenario-3")}
+                          disabled={runningScenario === "scenario-3"}
                         >
-                          Scenario 3 / Guardrail capture pending
+                          {runningScenario === "scenario-3"
+                            ? "Running Scenario 3..."
+                            : "Run Scenario 3 / Error anomaly to cooldown block"}
                         </button>
                       </div>
                     </article>
@@ -755,7 +760,10 @@ function App() {
 
                     <article className="scenario-card scenario-card--muted">
                       <h3>Scenario 3</h3>
-                      <p>Guardrail cooldown support exists, but live capture is still pending.</p>
+                      <p>
+                        Runs two consecutive error-triggered restart attempts. The first restart is allowed,
+                        and the repeated restart should be blocked by cooldown guardrails.
+                      </p>
                     </article>
                   </div>
                 </>

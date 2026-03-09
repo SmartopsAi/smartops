@@ -353,12 +353,22 @@ def build_pipeline_stages(
         {"label": "Priority", "value": "-"},
         {"label": "Guardrail", "value": "-"},
     ]
+
     if policy_decision:
-        decide_status = "Decision"
-        decide_summary = (
-            f"Policy {policy_decision.get('policy', '-')} returned "
-            f"{policy_decision.get('decision', '-')}"
-        )
+        decision_value = str(policy_decision.get("decision", "")).lower()
+
+        if decision_value == "blocked":
+            decide_status = "Blocked"
+            decide_summary = (
+                f"Policy {policy_decision.get('policy', '-')} was blocked by guardrails."
+            )
+        else:
+            decide_status = "Decision"
+            decide_summary = (
+                f"Policy {policy_decision.get('policy', '-')} returned "
+                f"{policy_decision.get('decision', '-')}"
+            )
+
         decide_last_updated = policy_decision.get("ts_utc") or policy_decision.get("ts")
         decide_details = [
             {"label": "Decision", "value": _stringify(policy_decision.get("decision"))},
@@ -375,7 +385,17 @@ def build_pipeline_stages(
         {"label": "Dry run", "value": "-"},
         {"label": "Verify", "value": "-"},
     ]
-    if policy_decision and policy_decision.get("action_plan"):
+
+    if policy_decision and str(policy_decision.get("decision", "")).lower() == "blocked":
+        act_status = "Blocked"
+        act_summary = "No remediation was executed because guardrails blocked the action."
+        act_details = [
+            {"label": "Action state", "value": "Blocked before execution"},
+            {"label": "Policy", "value": _stringify(policy_decision.get("policy"))},
+            {"label": "Guardrail", "value": _stringify(policy_decision.get("guardrail_reason"), "-")},
+            {"label": "Execution", "value": "Not executed"},
+        ]
+    elif policy_decision and policy_decision.get("action_plan"):
         action_plan = policy_decision.get("action_plan") or {}
         target = action_plan.get("target") or {}
         action_type = action_plan.get("type", "unknown")
@@ -401,7 +421,18 @@ def build_pipeline_stages(
         {"label": "Ready replicas", "value": "-"},
         {"label": "Desired replicas", "value": "-"},
     ]
-    if verification:
+
+    if policy_decision and str(policy_decision.get("decision", "")).lower() == "blocked":
+        verify_status = "Blocked"
+        verify_summary = "Verification was not required because no action was executed."
+        verify_details = [
+            {"label": "Status", "value": "Blocked"},
+            {"label": "Overall", "value": "Not applicable"},
+            {"label": "Ready replicas", "value": _stringify(system_state.get("replicasReady"))},
+            {"label": "Desired replicas", "value": _stringify(system_state.get("replicasDesired"))},
+            {"label": "Message", "value": "Guardrails prevented execution, so verification was skipped."},
+        ]
+    elif verification:
         verification_state = verification.get("status")
         overall = verification.get("overall")
 

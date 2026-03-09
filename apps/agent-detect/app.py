@@ -34,7 +34,8 @@ RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 window_count = 0
 clean_counter = 0
 anomaly_state = False
-last_sent_state = False  # Prevent duplicate signal spam
+last_sent_state = False
+last_sent_window_key = None  # Track last emitted anomaly window/type
 
 # ===================================
 # HELPER: Send anomaly to orchestrator
@@ -73,7 +74,7 @@ def send_anomaly_signal(service: str, anomaly_type: str, anomaly_final: bool, ri
 # MAIN LOOP
 # ===================================
 def main():
-    global window_count, clean_counter, anomaly_state, last_sent_state
+    global window_count, clean_counter, anomaly_state, last_sent_state, last_sent_window_key
 
     print("[INFO] Agent Detect started (LIVE)")
     print(f"[INFO] Running PROFILE={PROFILE}")
@@ -216,14 +217,21 @@ def main():
             except Exception:
                 pass
         # -------------------------------
-        # SEND TO ORCHESTRATOR (ONLY ON STATE CHANGE)
+        # SEND TO ORCHESTRATOR
+        # Emit once per anomaly window/type, not only on boolean state change.
+        # This lets repeated demo scenarios generate fresh signals even if the
+        # detector remains in anomaly state across adjacent windows.
         # -------------------------------
-        if anomaly_final and not last_sent_state:
-            send_anomaly_signal(service_name, anomaly_type, anomaly_final, risk)
-            last_sent_state = True
+        current_window_key = (anomaly_final, anomaly_type, risk, int(time.time() // WINDOW_SECONDS))
 
-        if not anomaly_final:
+        if anomaly_final:
+            if current_window_key != last_sent_window_key:
+                send_anomaly_signal(service_name, anomaly_type, anomaly_final, risk)
+                last_sent_window_key = current_window_key
+            last_sent_state = True
+        else:
             last_sent_state = False
+            last_sent_window_key = None
 
         time.sleep(1)
 

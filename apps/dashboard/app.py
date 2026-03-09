@@ -433,27 +433,86 @@ def _build_live_scenarios(system: str, signals: dict, policy_events: list) -> di
     anomalies = signals.get("anomalies", []) or []
     rcas = signals.get("rcas", []) or []
 
+    scenario_1 = _build_live_scenario(
+        key="scenario-1",
+        title="Scenario 1 - Resource anomaly triggered safe scale-up",
+        scenario_type="resource",
+        policy_name="scale_up_on_anomaly_resource_step_1",
+        system=system,
+        policy_events=policy_events,
+        anomalies=anomalies,
+        rcas=rcas,
+    )
+
+    scenario_2 = _build_live_scenario(
+        key="scenario-2",
+        title="Scenario 2 - Error anomaly triggered restart",
+        scenario_type="error",
+        policy_name="restart_on_anomaly_error",
+        system=system,
+        policy_events=policy_events,
+        anomalies=anomalies,
+        rcas=rcas,
+    )
+
+    blocked_restart = None
+    for event in policy_events:
+        action_plan = event.get("action_plan") or {}
+        target = action_plan.get("target") or {}
+
+        if (
+            event.get("policy") == "restart_on_anomaly_error"
+            and str(event.get("decision", "")).lower() == "blocked"
+            and target.get("name") in {_normalize_system_name(system), None}
+            and "restart cooldown" in str(event.get("guardrail_reason", "")).lower()
+        ):
+            blocked_restart = event
+            break
+
+    blocked_window_id = _pick_matching_window_for_policy(
+        policy_event=blocked_restart,
+        signals=signals,
+        system=system,
+        anomaly_type="error",
+    )
+
+    blocked_anomaly = _pick_anomaly_for_window(anomalies, system, blocked_window_id)
+    blocked_rca = _pick_rca_for_window(rcas, system, blocked_window_id)
+    top_cause = ((blocked_rca or {}).get("rankedCauses") or [{}])[0]
+
+    scenario_3 = {
+        "key": "scenario-3",
+        "title": "Scenario 3 - Guarded self-healing through restart cooldown",
+        "mode": "live",
+        "observed": blocked_restart is not None,
+        "observedAt": (blocked_restart or {}).get("ts_utc") or (blocked_restart or {}).get("ts"),
+        "windowIds": [str(blocked_window_id)] if blocked_window_id else [],
+        "service": system,
+        "anomalyType": str((blocked_anomaly or {}).get("type", "error")).upper(),
+        "risk": ((blocked_anomaly or {}).get("metadata") or {}).get("risk"),
+        "score": (blocked_anomaly or {}).get("score"),
+        "policy": (blocked_restart or {}).get("policy"),
+        "decision": (blocked_restart or {}).get("decision"),
+        "guardrail": (blocked_restart or {}).get("guardrail_reason"),
+        "action": None,
+        "verifyRequested": False,
+        "targetDeployment": _normalize_system_name(system),
+        "targetNamespace": DEFAULT_NAMESPACE,
+        "targetReplicas": None,
+        "rcaCause": top_cause.get("cause"),
+        "rcaProbability": top_cause.get("probability"),
+        "confidence": (blocked_rca or {}).get("confidence"),
+        "summary": (
+            "Live evidence observed for restart cooldown guardrail blocking repeated self-healing."
+            if blocked_restart
+            else "No recent live evidence has been matched yet for restart cooldown guardrail blocking."
+        ),
+    }
+
     return {
-        "scenario-1": _build_live_scenario(
-            key="scenario-1",
-            title="Scenario 1 - Resource anomaly triggered safe scale-up",
-            scenario_type="resource",
-            policy_name="scale_up_on_anomaly_resource_step_1",
-            system=system,
-            policy_events=policy_events,
-            anomalies=anomalies,
-            rcas=rcas,
-        ),
-        "scenario-2": _build_live_scenario(
-            key="scenario-2",
-            title="Scenario 2 - Error anomaly triggered restart",
-            scenario_type="error",
-            policy_name="restart_on_anomaly_error",
-            system=system,
-            policy_events=policy_events,
-            anomalies=anomalies,
-            rcas=rcas,
-        ),
+        "scenario-1": scenario_1,
+        "scenario-2": scenario_2,
+        "scenario-3": scenario_3,
     }
 
 
@@ -461,10 +520,11 @@ def _pick_policy_for_window(policy_events: list, system: str, window_id: str | N
     if not window_id:
         return None
 
-    expected_target_name = _normalize_system_name(system)
     window_epoch = _parse_event_epoch(window_id)
     if window_epoch is None:
         return None
+
+    expected_target_name = _normalize_system_name(system)
 
     best_event = None
     best_delta = None
@@ -472,7 +532,20 @@ def _pick_policy_for_window(policy_events: list, system: str, window_id: str | N
     for event in policy_events:
         action_plan = event.get("action_plan") or {}
         target = action_plan.get("target") or {}
-        if target.get("name") != expected_target_name:
+        target_name = target.get("name")
+
+        event_policy = event.get("policy")
+        event_decision = str(event.get("decision", "")).lower()
+        guardrail_reason = str(event.get("guardrail_reason", "")).lower()
+
+        target_matches = target_name == expected_target_name
+        blocked_restart_cooldown = (
+            event_policy == "restart_on_anomaly_error"
+            and event_decision == "blocked"
+            and "restart cooldown" in guardrail_reason
+        )
+
+        if not target_matches and not blocked_restart_cooldown:
             continue
 
         event_epoch = _parse_event_epoch(event.get("ts_utc") or event.get("ts"))
@@ -488,7 +561,6 @@ def _pick_policy_for_window(policy_events: list, system: str, window_id: str | N
             best_event = event
 
     return best_event
-
 
 def _apply_scenario_context(
     *,
@@ -588,6 +660,27 @@ def _wait_for_policy_event(policy_name: str, system: str, started_epoch: int, ti
 
     return None
 
+def _wait_for_blocked_restart_cooldown(system: str, started_epoch: int, timeout_seconds: int = 120) -> dict | None:
+    deadline = time.time() + timeout_seconds
+
+    while time.time() < deadline:
+        events = _get_policy_events(limit=40)
+        for event in events:
+            event_epoch = _parse_event_epoch(event.get("ts_utc") or event.get("ts"))
+            guardrail_reason = str(event.get("guardrail_reason", "")).lower()
+
+            if (
+                event.get("policy") == "restart_on_anomaly_error"
+                and str(event.get("decision", "")).lower() == "blocked"
+                and "restart cooldown" in guardrail_reason
+                and event_epoch is not None
+                and event_epoch >= started_epoch
+            ):
+                return event
+
+        time.sleep(3)
+
+    return None
 
 def _pick_matching_window_for_policy(policy_event: dict | None, signals: dict, system: str, anomaly_type: str) -> str | None:
     if not policy_event:
@@ -922,6 +1015,72 @@ def _execute_scenario_k8s_native(scenario_key: str, namespace: str = DEFAULT_NAM
         expected_type,
     )
 
+def _execute_scenario_3_k8s_native(namespace: str = DEFAULT_NAMESPACE) -> dict:
+    reset_result = _reset_simulator_baseline(namespace)
+    if not reset_result.get("ok"):
+        return {
+            "ok": False,
+            "message": "Baseline reset failed before Scenario 3 execution.",
+            "reset": reset_result,
+        }
+
+    first_enable = _enable_chaos_mode_on_all_pods("error_burst", namespace)
+    if not first_enable.get("ok"):
+        return {
+            "ok": False,
+            "message": "Failed to enable error_burst for first Scenario 3 run.",
+            "reset": reset_result,
+            "scenario": {"first_enable": first_enable},
+        }
+    
+    first_started_epoch = int(time.time())
+    first_load = _generate_simulator_load("error", iterations=20, sleep_seconds=1.0)
+
+    first_policy = _wait_for_policy_event(
+        policy_name="restart_on_anomaly_error",
+        system="erp-simulator",
+        started_epoch=first_started_epoch,
+        timeout_seconds=120,
+    )
+
+    if not first_policy:
+        return {
+            "ok": False,
+            "message": "Scenario 3 first restart action was not observed.",
+            "reset": reset_result,
+            "scenario": {
+                "first_enable": first_enable,
+                "first_load": first_load,
+            },
+        }
+
+    second_enable = _enable_chaos_mode_on_all_pods("error_burst", namespace)
+    if not second_enable.get("ok"):
+        return {
+            "ok": False,
+            "message": "Failed to enable error_burst for second Scenario 3 run.",
+            "reset": reset_result,
+            "scenario": {
+                "first_enable": first_enable,
+                "first_load": first_load,
+                "first_policy": first_policy,
+                "second_enable": second_enable,
+            },
+        }
+
+    second_load = _generate_simulator_load("error", iterations=20, sleep_seconds=1.0)
+
+    return {
+        "ok": True,
+        "reset": reset_result,
+        "scenario": {
+            "first_enable": first_enable,
+            "first_load": first_load,
+            "first_policy": first_policy,
+            "second_enable": second_enable,
+            "second_load": second_load,
+        },
+    }
 
 @app.context_processor
 def inject_globals():
@@ -1007,7 +1166,7 @@ def api_run_scenario():
             "message": "Scenario execution is supported only for ERP-simulator.",
         }), 400
 
-    if scenario_key not in {"scenario-1", "scenario-2"}:
+    if scenario_key not in {"scenario-1", "scenario-2", "scenario-3"}:
         return jsonify({
             "status": "error",
             "message": "Unsupported scenario key.",
@@ -1017,10 +1176,15 @@ def api_run_scenario():
 
     started_epoch = int(time.time())
 
-    execution_result, expected_policy, expected_type = _execute_scenario_k8s_native(
-        scenario_key=scenario_key,
-        namespace=namespace,
-    )
+    if scenario_key == "scenario-3":
+        execution_result = _execute_scenario_3_k8s_native(namespace=namespace)
+        expected_policy = "restart_on_anomaly_error"
+        expected_type = "error"
+    else:
+        execution_result, expected_policy, expected_type = _execute_scenario_k8s_native(
+            scenario_key=scenario_key,
+            namespace=namespace,
+        )
 
     if not execution_result.get("ok"):
         return jsonify({
@@ -1030,12 +1194,19 @@ def api_run_scenario():
             "scenario": execution_result.get("scenario"),
         }), 500
 
-    matched_policy = _wait_for_policy_event(
-        policy_name=expected_policy,
-        system=system,
-        started_epoch=started_epoch,
-        timeout_seconds=120,
-    )
+    if scenario_key == "scenario-3":
+        matched_policy = _wait_for_blocked_restart_cooldown(
+            system=system,
+            started_epoch=started_epoch,
+            timeout_seconds=120,
+        )
+    else:
+        matched_policy = _wait_for_policy_event(
+            policy_name=expected_policy,
+            system=system,
+            started_epoch=started_epoch,
+            timeout_seconds=120,
+        )
 
     window_id = None
     signals = {"anomalies": [], "rcas": []}
@@ -1064,23 +1235,35 @@ def api_run_scenario():
             window_id = str(latest_window_ids[0])
 
         if matched_policy is None and latest_live.get("policy"):
-            matched_policy = {
-                "policy": latest_live.get("policy"),
-                "decision": latest_live.get("decision"),
-                "guardrail_reason": latest_live.get("guardrail"),
-                "action_plan": {
+            synthetic_action_plan = None
+            if latest_live.get("action"):
+                synthetic_action_plan = {
                     "type": latest_live.get("action"),
                     "verify": latest_live.get("verifyRequested"),
                     "target": {
                         "name": latest_live.get("targetDeployment"),
                         "namespace": latest_live.get("targetNamespace"),
                     },
-                    "scale": {
+                }
+                if latest_live.get("targetReplicas") is not None:
+                    synthetic_action_plan["scale"] = {
                         "replicas": latest_live.get("targetReplicas"),
-                    } if latest_live.get("targetReplicas") is not None else {},
-                },
-            }
+                    }
 
+            matched_policy = {
+                "policy": latest_live.get("policy"),
+                "decision": latest_live.get("decision"),
+                "guardrail_reason": latest_live.get("guardrail"),
+                "action_plan": synthetic_action_plan,
+            }
+    if scenario_key == "scenario-3" and not window_id and matched_policy:
+        signals = _get_recent_signals(limit=40)
+        window_id = _pick_matching_window_for_policy(
+            policy_event=matched_policy,
+            signals=signals,
+            system=system,
+            anomaly_type="error",
+        )
     return jsonify({
         "status": "ok",
         "scenarioKey": scenario_key,
