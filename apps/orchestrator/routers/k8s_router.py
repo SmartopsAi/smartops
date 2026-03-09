@@ -21,10 +21,6 @@ tracer = trace.get_tracer(__name__)
 action_runner = ActionRunner()
 
 
-# ---------------------------------------------------------------------------
-# Request Models
-# ---------------------------------------------------------------------------
-
 class ScaleRequest(BaseModel):
     namespace: Optional[str] = Field(
         default=None,
@@ -55,18 +51,11 @@ class PatchRequest(BaseModel):
     )
 
 
-# ---------------------------------------------------------------------------
-# List Pods
-# ---------------------------------------------------------------------------
-
 @router.get("/pods")
 async def get_pods(
     namespace: Optional[str] = Query(default=None),
     label_selector: Optional[str] = Query(default=None),
 ):
-    """
-    List pods in the cluster for a given namespace and optional label selector.
-    """
     with tracer.start_as_current_span("router.k8s.get_pods"):
         try:
             items = list_pods(namespace=namespace, label_selector=label_selector)
@@ -75,18 +64,11 @@ async def get_pods(
             raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ---------------------------------------------------------------------------
-# List Deployments
-# ---------------------------------------------------------------------------
-
 @router.get("/deployments")
 async def get_deployments(
     namespace: Optional[str] = Query(default=None),
     label_selector: Optional[str] = Query(default=None),
 ):
-    """
-    List deployments in the given namespace.
-    """
     with tracer.start_as_current_span("router.k8s.get_deployments"):
         try:
             items = list_deployments(namespace=namespace, label_selector=label_selector)
@@ -95,22 +77,20 @@ async def get_deployments(
             raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ---------------------------------------------------------------------------
-# Scale Deployment
-# ---------------------------------------------------------------------------
-
 @router.post("/scale/{deployment_name}")
 async def scale(
     deployment_name: str,
     body: ScaleRequest,
 ):
-    """
-    Scale a deployment to a specific replica count.
-    Accepts friendly names (e.g., 'erp-simulator') and resolves them to
-    real deployment names (e.g., 'smartops-erp-simulator').
-    """
     ns = body.namespace or k8s_core.DEFAULT_NAMESPACE
-    resolved_name = resolve_deployment_name(deployment_name)
+    resolved_name = resolve_deployment_name(deployment_name, ns)
+
+    if not resolved_name:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Deployment '{deployment_name}' not found in namespace '{ns}'",
+        )
+
     target = f"Deployment {ns}/{resolved_name}"
 
     with tracer.start_as_current_span("router.k8s.scale") as span:
@@ -143,22 +123,21 @@ async def scale(
         }
 
 
-# ---------------------------------------------------------------------------
-# Restart Deployment
-# ---------------------------------------------------------------------------
-
 @router.post("/restart/{deployment_name}")
 async def restart(
     deployment_name: str,
     namespace: Optional[str] = Query(default=None),
     dry_run: Optional[bool] = Query(default=False),
 ):
-    """
-    Trigger a rolling restart of a deployment (kubectl rollout restart style).
-    Accepts friendly names and resolves them to real K8s names.
-    """
     ns = namespace or k8s_core.DEFAULT_NAMESPACE
-    resolved_name = resolve_deployment_name(deployment_name)
+    resolved_name = resolve_deployment_name(deployment_name, ns)
+
+    if not resolved_name:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Deployment '{deployment_name}' not found in namespace '{ns}'",
+        )
+
     target = f"Deployment {ns}/{resolved_name}"
 
     with tracer.start_as_current_span("router.k8s.restart") as span:
@@ -189,22 +168,20 @@ async def restart(
         }
 
 
-# ---------------------------------------------------------------------------
-# Patch Deployment
-# ---------------------------------------------------------------------------
-
 @router.post("/patch/{deployment_name}")
 async def patch(
     deployment_name: str,
     body: PatchRequest,
 ):
-    """
-    Apply a generic patch to a deployment.
-    WARNING: Powerful operation; in SmartOps this will be driven by Policy Engine guardrails.
-    Accepts friendly names and resolves them to real K8s names.
-    """
     ns = body.namespace or k8s_core.DEFAULT_NAMESPACE
-    resolved_name = resolve_deployment_name(deployment_name)
+    resolved_name = resolve_deployment_name(deployment_name, ns)
+
+    if not resolved_name:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Deployment '{deployment_name}' not found in namespace '{ns}'",
+        )
+
     target = f"Deployment {ns}/{resolved_name}"
 
     with tracer.start_as_current_span("router.k8s.patch") as span:

@@ -346,13 +346,20 @@ def simulate_load(payload: LoadSimulationRequest) -> LoadSimulationResponse:
             span.set_attribute("sim.memory_allocated_bytes", leak_bytes)
 
         # 3) CPU load (base + optional spike)
+        target = (payload.target or "cpu").strip().lower()
         cpu_duration = payload.duration_seconds
-        if SIM_MODES["cpu_spike"]:
-            cpu_duration += 0.5  # simple extra burn for spike
 
-        with CPU_BURN_HIST.time():
-            elapsed = _cpu_burn(cpu_duration)
-            span.set_attribute("sim.cpu_burn_ms", elapsed * 1000.0)
+        if target == "error":
+            cpu_duration = 0.0
+            span.set_attribute("sim.target", "error")
+            span.set_attribute("sim.cpu_burn_ms", 0.0)
+        else:
+            if SIM_MODES["cpu_spike"]:
+                cpu_duration += 0.5  # simple extra burn for spike
+
+            with CPU_BURN_HIST.time():
+                elapsed = _cpu_burn(cpu_duration)
+                span.set_attribute("sim.cpu_burn_ms", elapsed * 1000.0)
 
         # 4) Error burst
         error_rate = settings.base_error_rate

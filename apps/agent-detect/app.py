@@ -106,8 +106,15 @@ def main():
         # Ground truth (SIMULATOR ONLY)
         # -------------------------------
         if PROFILE == "simulator":
-            ground_truth_active = metrics.get("modes_enabled", 0) > 0
+            modes_enabled = float(metrics.get("modes_enabled", 0) or 0)
+            error_count = float(metrics.get("error_count", 0.0) or 0.0)
+
+            error_ground_truth = error_count > 0.0
+            resource_ground_truth = modes_enabled > 0 and not error_ground_truth
+            ground_truth_active = error_ground_truth or resource_ground_truth
         else:
+            error_ground_truth = False
+            resource_ground_truth = False
             ground_truth_active = False
 
         # -------------------------------
@@ -119,7 +126,7 @@ def main():
         else:
             # simulator
             if SIM_USE_GROUND_TRUTH:
-                raw_anomaly = ground_truth_active or iso_result or stat_result
+                raw_anomaly = error_ground_truth or resource_ground_truth or iso_result or stat_result
             else:
                 raw_anomaly = iso_result or (stat_result and ground_truth_active)
         # -------------------------------
@@ -199,6 +206,12 @@ def main():
         if PROFILE == "odoo":
             try:
                 if float(metrics.get("odoo_no_endpoint", 0.0)) >= 1.0:
+                    anomaly_type = "error"
+            except Exception:
+                pass
+        else:
+            try:
+                if float(metrics.get("error_count", 0.0)) > 0.0:
                     anomaly_type = "error"
             except Exception:
                 pass
