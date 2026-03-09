@@ -28,6 +28,10 @@ class OrchestratorClient:
 
         self.base_url = (orch_url or default_url).rstrip("/")
 
+        # Separate timeouts because verification can legitimately take longer
+        self.post_timeout_seconds = int(os.environ.get("ORCH_POST_TIMEOUT_SECONDS", "70"))
+        self.get_timeout_seconds = int(os.environ.get("ORCH_GET_TIMEOUT_SECONDS", "10"))
+
         logger.info(f"OrchestratorClient initialized with base URL: {self.base_url}")
 
     # ------------------------------------------------------------------
@@ -41,7 +45,7 @@ class OrchestratorClient:
         url = f"{self.base_url}{endpoint}"
 
         try:
-            resp = requests.post(url, json=payload, timeout=5)
+            resp = requests.post(url, json=payload, timeout=self.post_timeout_seconds)
             resp.raise_for_status()
             return resp.json()
 
@@ -50,6 +54,13 @@ class OrchestratorClient:
             return {
                 "status": "error",
                 "message": "Orchestrator unreachable (is it running?)"
+            }
+
+        except requests.exceptions.Timeout:
+            logger.error(f"Orchestrator API timeout at {url}")
+            return {
+                "status": "error",
+                "message": f"Orchestrator request timed out after {self.post_timeout_seconds}s"
             }
 
         except requests.exceptions.RequestException as e:
@@ -66,7 +77,7 @@ class OrchestratorClient:
         url = f"{self.base_url}{endpoint}"
 
         try:
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, timeout=self.get_timeout_seconds)
             resp.raise_for_status()
             return resp.json()
 
@@ -75,6 +86,13 @@ class OrchestratorClient:
             return {
                 "status": "error",
                 "message": "Orchestrator unreachable (is it running?)"
+            }
+
+        except requests.exceptions.Timeout:
+            logger.error(f"Orchestrator API timeout at {url}")
+            return {
+                "status": "error",
+                "message": f"Orchestrator request timed out after {self.get_timeout_seconds}s"
             }
 
         except requests.exceptions.RequestException as e:

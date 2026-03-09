@@ -1,0 +1,70 @@
+export const PP2_SCENARIO_EVIDENCE = {
+  "scenario-1": {
+    key: "scenario-1",
+    title: "Scenario 1 - Resource anomaly triggered safe scale-up",
+    type: "pp2-evidence",
+    windowIds: ["1772918029"],
+    service: "erp-simulator",
+    anomalyType: "RESOURCE",
+    risk: "HIGH",
+    score: 0.9,
+    policy: "scale_up_on_anomaly_resource_step_1",
+    action: "scale",
+    targetDeployment: "smartops-erp-simulator",
+    targetReplicas: 4,
+    result: "SUCCESS",
+    durationSeconds: 16.53,
+    rcaCause: "Resource Saturation",
+    rcaProbability: 1.0,
+    summary:
+      "SmartOps detected a resource anomaly, selected scale_up_on_anomaly_resource_step_1, executed scale to 4 replicas, and completed remediation successfully.",
+  },
+  "scenario-2": {
+    key: "scenario-2",
+    title: "Scenario 2 - Error anomaly triggered restart",
+    type: "pp2-evidence",
+    windowIds: ["1772920104"],
+    service: "erp-simulator",
+    anomalyType: "ERROR",
+    risk: "HIGH",
+    score: 0.9,
+    policy: "restart_on_anomaly_error",
+    action: "restart",
+    targetDeployment: "smartops-erp-simulator",
+    result: "SUCCESS",
+    durationSeconds: 28.2,
+    rcaCause: "Service Timeout",
+    rcaProbability: 1.0,
+    summary:
+      "SmartOps detected an error anomaly, selected restart_on_anomaly_error, executed restart, and completed remediation successfully.",
+  },
+  "scenario-3": {
+    key: "scenario-3",
+    title: "Scenario 3 - Guarded self-healing through restart cooldown",
+    type: "pp2-evidence",
+    windowIds: ["1772914128", "1772914799"],
+    service: "erp-simulator",
+    firstAction: "restart",
+    firstResult: "SUCCESS",
+    repeatedActionRequested: "restart",
+    guardrail: "restart cooldown",
+    cooldownWindowSeconds: 900,
+    cooldownEvidence: "elapsed=671.35s < 900s",
+    finalDecision: "skipped",
+    summary:
+      "SmartOps allowed the first corrective restart, then blocked the second immediate restart through cooldown guardrails to prevent repeated disruptive remediation.",
+  },
+};
+
+export const DEVOPS_ACTIONS = [
+  {
+    key: "manual-scale",
+    title: "Manual scale action",
+    description: "Direct DevOps control to scale the ERP simulator deployment.",
+  },
+  {
+    key: "manual-restart",
+    title: "Manual restart action",
+    description: "Direct DevOps control to restart the ERP simulator deployment.",
+  },
+];

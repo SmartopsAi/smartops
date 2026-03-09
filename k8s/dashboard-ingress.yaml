@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smartops-dashboard-ingress
+  namespace: smartops-dev
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: dashboard.localhost
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: smartops-dashboard-api
+                port:
+                  number: 5050
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: smartops-dashboard-ui
+                port:
+                  number: 80

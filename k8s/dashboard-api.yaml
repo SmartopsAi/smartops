@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartops-dashboard-api
+  namespace: smartops-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: smartops-dashboard-api
+  template:
+    metadata:
+      labels:
+        app: smartops-dashboard-api
+    spec:
+      containers:
+        - name: dashboard-api
+          image: smartops-dashboard-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5050
+          env:
+            - name: DASHBOARD_PORT
+              value: "5050"
+            - name: ORCH_URL
+              value: "http://smartops-orchestrator:8001"
+            - name: POLICY_ENGINE_URL
+              value: "http://smartops-policy-engine:5051"
+            - name: PROMETHEUS_ENABLED
+              value: "true"
+            - name: PROMETHEUS_URL
+              value: "http://kps-kube-prometheus-stack-prometheus.monitoring:9090"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: runtime-data
+              mountPath: /data/runtime
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 5050
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5050
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+      volumes:
+        - name: runtime-data
+          configMap:
+            name: smartops-runtime
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smartops-dashboard-api
+  namespace: smartops-dev
+spec:
+  selector:
+    app: smartops-dashboard-api
+  ports:
+    - name: http
+      port: 5050
+      targetPort: 5050
+  type: ClusterIP
