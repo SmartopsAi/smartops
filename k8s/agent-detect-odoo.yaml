@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: agent-detect
-          image: REGISTRY_PLACEHOLDER/smartops-agent-detect:cloud-latest
+          image: registry.digitalocean.com/smartops-registry/smartops-orchestrator:agent-detect-cloud-latest
           imagePullPolicy: IfNotPresent
           env:
             - name: PROFILE
@@ -39,5 +39,7 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+
+
 
 

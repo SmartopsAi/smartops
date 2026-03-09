@@ -115,13 +115,6 @@ def _get_recent_signals(limit: int = 20) -> dict:
     }
 
 
-def _pick_latest_for_system(items: list, system: str) -> dict | None:
-    for item in items:
-        if item.get("service") == system:
-            return item
-    return None
-
-
 def _normalize_system_name(system: str) -> str:
     if system == "erp-simulator":
         return "smartops-erp-simulator"
@@ -140,18 +133,59 @@ def _system_from_deployment_name(name: str | None) -> str | None:
     return None
 
 
+def _event_sort_epoch(item: dict) -> int:
+    return (
+        _parse_event_epoch(item.get("ts_utc"))
+        or _parse_event_epoch(item.get("ts"))
+        or _parse_event_epoch(item.get("windowId"))
+        or 0
+    )
+
+RECENT_SIGNAL_WINDOW_SECONDS = int(os.getenv("RECENT_SIGNAL_WINDOW_SECONDS", "90"))
+
+def _is_recent_event(item: dict | None, max_age_seconds: int = RECENT_SIGNAL_WINDOW_SECONDS) -> bool:
+    if not item:
+        return False
+
+    event_epoch = (
+        _parse_event_epoch(item.get("ts_utc"))
+        or _parse_event_epoch(item.get("ts"))
+        or _parse_event_epoch(item.get("windowId"))
+    )
+    if event_epoch is None:
+        return False
+
+    return (int(time.time()) - event_epoch) <= max_age_seconds
+
+
+def _pick_latest_for_system(items: list, system: str) -> dict | None:
+    filtered = [item for item in items if item.get("service") == system]
+    if not filtered:
+        return None
+    return max(filtered, key=_event_sort_epoch)
+
+
 def _pick_latest_policy_for_system(events: list, system: str) -> dict | None:
     expected_target_name = _normalize_system_name(system)
 
+    filtered = []
     for event in events:
         action_plan = event.get("action_plan") or {}
         target = action_plan.get("target") or {}
-        target_name = target.get("name")
-        if target_name == expected_target_name:
-            return event
+        if target.get("name") == expected_target_name:
+            filtered.append(event)
 
-    return None
+    if not filtered:
+        return None
 
+    return max(
+        filtered,
+        key=lambda ev: (
+            _parse_event_epoch(ev.get("ts_utc"))
+            or _parse_event_epoch(ev.get("ts"))
+            or 0
+        ),
+    )
 
 def _latest_verification_placeholder(policy_event: dict | None) -> dict | None:
     if not policy_event:
@@ -315,12 +349,25 @@ def _parse_event_epoch(value) -> int | None:
 
 def _pick_latest_policy_by_name(events: list, system: str, policy_name: str) -> dict | None:
     expected_target_name = _normalize_system_name(system)
+
+    filtered = []
     for event in events:
         action_plan = event.get("action_plan") or {}
         target = action_plan.get("target") or {}
         if event.get("policy") == policy_name and target.get("name") == expected_target_name:
-            return event
-    return None
+            filtered.append(event)
+
+    if not filtered:
+        return None
+
+    return max(
+        filtered,
+        key=lambda ev: (
+            _parse_event_epoch(ev.get("ts_utc"))
+            or _parse_event_epoch(ev.get("ts"))
+            or 0
+        ),
+    )
 
 
 def _pick_closest_anomaly_for_policy(
@@ -455,7 +502,7 @@ def _build_live_scenarios(system: str, signals: dict, policy_events: list) -> di
         rcas=rcas,
     )
 
-    blocked_restart = None
+    blocked_candidates = []
     for event in policy_events:
         action_plan = event.get("action_plan") or {}
         target = action_plan.get("target") or {}
@@ -466,8 +513,20 @@ def _build_live_scenarios(system: str, signals: dict, policy_events: list) -> di
             and target.get("name") in {_normalize_system_name(system), None}
             and "restart cooldown" in str(event.get("guardrail_reason", "")).lower()
         ):
-            blocked_restart = event
-            break
+            blocked_candidates.append(event)
+
+    blocked_restart = (
+        max(
+            blocked_candidates,
+            key=lambda ev: (
+                _parse_event_epoch(ev.get("ts_utc"))
+                or _parse_event_epoch(ev.get("ts"))
+                or 0
+            ),
+        )
+        if blocked_candidates
+        else None
+    )
 
     blocked_window_id = _pick_matching_window_for_policy(
         policy_event=blocked_restart,
@@ -1068,8 +1127,28 @@ def _execute_scenario_3_k8s_native(namespace: str = DEFAULT_NAMESPACE) -> dict:
             },
         }
 
+    second_started_epoch = int(time.time())
     second_load = _generate_simulator_load("error", iterations=20, sleep_seconds=1.0)
 
+    blocked_policy = _wait_for_blocked_restart_cooldown(
+        system="erp-simulator",
+        started_epoch=second_started_epoch,
+        timeout_seconds=120,
+    )
+
+    if not blocked_policy:
+        return {
+            "ok": False,
+            "message": "Scenario 3 cooldown block was not observed.",
+            "reset": reset_result,
+            "scenario": {
+                "first_enable": first_enable,
+                "first_load": first_load,
+                "first_policy": first_policy,
+                "second_enable": second_enable,
+                "second_load": second_load,
+            },
+        }
     return {
         "ok": True,
         "reset": reset_result,
@@ -1079,6 +1158,7 @@ def _execute_scenario_3_k8s_native(namespace: str = DEFAULT_NAMESPACE) -> dict:
             "first_policy": first_policy,
             "second_enable": second_enable,
             "second_load": second_load,
+            "blocked_policy": blocked_policy,
         },
     }
 
@@ -1397,7 +1477,17 @@ def api_dashboard_state():
 
     latest_anomaly = _pick_latest_for_system(signals.get("anomalies", []), system)
     latest_rca = _pick_latest_for_system(signals.get("rcas", []), system)
+
+    if not _is_recent_event(latest_anomaly):
+        latest_anomaly = None
+        latest_rca = None
+    elif latest_rca and str(latest_rca.get("windowId")) != str(latest_anomaly.get("windowId")):
+        latest_rca = None
+
     latest_policy = _pick_latest_policy_for_system(policy_events, system)
+
+    if latest_anomaly is None:
+        latest_policy = None
 
     manual_state = MANUAL_EXECUTION_STATE.get(system, {})
     manual_action_result = manual_state.get("lastActionResult")
@@ -1409,7 +1499,7 @@ def api_dashboard_state():
     if manual_action_result and not using_bound_live_context:
         effective_policy = _build_manual_policy_like_result(manual_action_result) or latest_policy
 
-    verification = _latest_verification_placeholder(latest_policy)
+    verification = _latest_verification_placeholder(effective_policy)
     if manual_verification_result and not using_bound_live_context:
         verification = _manual_verification_to_summary(manual_verification_result)
 
@@ -1435,7 +1525,7 @@ def api_dashboard_state():
         effective_replicas_ready = erp_metrics.get("replicas_ready")
         effective_replicas_available = erp_metrics.get("replicas_available")
 
-        if manual_verification_result:
+        if manual_verification_result and not using_bound_live_context:
             if manual_verification_result.get("desired_replicas") is not None:
                 effective_replicas_desired = manual_verification_result.get("desired_replicas")
             if manual_verification_result.get("ready_replicas") is not None:
@@ -1500,6 +1590,16 @@ def api_dashboard_state():
             effective_rca = scenario_context.get("rca")
         if scenario_context.get("policy") is not None:
             effective_policy = scenario_context.get("policy")
+
+    if bound_context and not manual_verification_result:
+        inferred_verification = _derive_live_verification_from_state(
+            effective_system_state,
+            effective_policy,
+        )
+        if inferred_verification is not None:
+            verification = inferred_verification
+        else:
+            verification = _latest_verification_placeholder(effective_policy)
 
     if system == "erp-simulator" and bound_context and effective_policy:
         action_plan = effective_policy.get("action_plan") or {}

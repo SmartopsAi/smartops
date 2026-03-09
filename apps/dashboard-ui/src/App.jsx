@@ -451,12 +451,13 @@ function App() {
               >
                 Open Prometheus
               </button>
-              <button
-                className="action-button"
-                onClick={() => openExternalLink(EXTERNAL_LINKS.odoo)}
-              >
-                Open Odoo
-              </button>
+                <button
+                  className="action-button"
+                  onClick={() => openExternalLink(EXTERNAL_LINKS.odoo)}
+                  disabled={!EXTERNAL_LINKS.odoo}
+                >
+                  Open Odoo
+                </button>
               <button
                 className="action-button"
                 onClick={clearScenarioBinding}

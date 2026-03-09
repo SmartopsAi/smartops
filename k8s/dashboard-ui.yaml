@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: dashboard-ui
-          image: REGISTRY_PLACEHOLDER/smartops-dashboard-ui:cloud-latest
+          image: registry.digitalocean.com/smartops-registry/smartops-dashboard-ui:cloud-latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
@@ -40,3 +40,5 @@ spec:
       port: 80
       targetPort: 80
   type: ClusterIP
+
+

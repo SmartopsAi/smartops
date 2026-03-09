@@ -15,19 +15,26 @@ spec:
     spec:
       containers:
         - name: policy-engine
-          image: REGISTRY_PLACEHOLDER/smartops-policy-engine:cloud-latest
+          image: registry.digitalocean.com/smartops-registry/smartops-policy-engine:cloud-latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8002
           env:
             - name: POLICY_ENGINE_PORT
               value: "8002"
+            - name: POLICY_ENGINE_AUDIT_PATH
+              value: "/policy_engine/audit/policy_decisions.jsonl"
           volumeMounts:
             - name: runtime-data
               mountPath: /apps/policy_engine/data
+            - name: policy-audit
+              mountPath: /policy_engine/audit
       volumes:
         - name: runtime-data
           emptyDir: {}
+        - name: policy-audit
+          persistentVolumeClaim:
+            claimName: policy-audit-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -41,4 +48,3 @@ spec:
     - name: http
       port: 5051
       targetPort: 8002
-

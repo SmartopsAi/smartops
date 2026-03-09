@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: agent-diagnose
-          image: REGISTRY_PLACEHOLDER/smartops-agent-diagnose:cloud-latest
+          image: registry.digitalocean.com/smartops-registry/smartops-orchestrator:agent-diagnose-cloud-latest
           imagePullPolicy: IfNotPresent
           env:
             - name: ERP_URL
@@ -31,5 +31,7 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+
+
 
 

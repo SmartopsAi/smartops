@@ -11,13 +11,12 @@ export const DASHBOARD_SYSTEMS = [
 ];
 
 export const EXTERNAL_LINKS = {
-  grafana: import.meta.env.VITE_GRAFANA_URL || "",
-  prometheus: import.meta.env.VITE_PROMETHEUS_URL || "",
-  odoo: import.meta.env.VITE_ODOO_URL || "",
+  grafana: import.meta.env.VITE_GRAFANA_URL || `${window.location.origin}/grafana`,
+  prometheus: import.meta.env.VITE_PROMETHEUS_URL || `${window.location.origin}/prometheus`,
+    odoo: import.meta.env.VITE_ODOO_URL || "http://odoo.example.com/web",
 };
 
 export const REFRESH_INTERVALS = {
   live: 10000,
   demo: 5000,
 };
-

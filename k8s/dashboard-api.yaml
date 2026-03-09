@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: dashboard-api
-          image: REGISTRY_PLACEHOLDER/smartops-dashboard-api:cloud-latest
+          image: registry.digitalocean.com/smartops-registry/smartops-dashboard-api:cloud-latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5050
@@ -26,10 +26,10 @@ spec:
               value: "http://smartops-orchestrator:8001"
             - name: POLICY_ENGINE_URL
               value: "http://smartops-policy-engine:5051"
+            - name: POLICY_ENGINE_AUDIT_PATH
+              value: "/policy_engine/audit/policy_decisions.jsonl"
             - name: PROMETHEUS_ENABLED
-              value: "true"
-            - name: PROMETHEUS_URL
-              value: "http://kps-kube-prometheus-stack-prometheus.monitoring:9090"
+              value: "false"
           resources:
             requests:
               cpu: "100m"
@@ -41,6 +41,8 @@ spec:
             - name: runtime-data
               mountPath: /data/runtime
               readOnly: true
+            - name: policy-audit
+              mountPath: /policy_engine/audit
           readinessProbe:
             httpGet:
               path: /healthz
@@ -61,6 +63,9 @@ spec:
         - name: runtime-data
           configMap:
             name: smartops-runtime
+        - name: policy-audit
+          persistentVolumeClaim:
+            claimName: policy-audit-pvc
 ---
 apiVersion: v1
 kind: Service

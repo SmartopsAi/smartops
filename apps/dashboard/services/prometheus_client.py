@@ -196,10 +196,10 @@ class PrometheusClient:
         req_rate_q = f"""
         sum(
           rate(
-            nginx_ingress_controller_requests{
+            nginx_ingress_controller_requests{{
               host="{self.odoo_host}",
               exported_namespace="{self.odoo_namespace}"
-            }[1m]
+            }}[1m]
           )
         )
         """
@@ -207,11 +207,11 @@ class PrometheusClient:
         err_5xx_q = f"""
         sum(
           rate(
-            nginx_ingress_controller_requests{
+            nginx_ingress_controller_requests{{
               host="{self.odoo_host}",
               exported_namespace="{self.odoo_namespace}",
               status=~"5.."
-            }[1m]
+            }}[1m]
           )
         )
         """
@@ -221,10 +221,10 @@ class PrometheusClient:
           0.95,
           sum by (le) (
             rate(
-              nginx_ingress_controller_request_duration_seconds_bucket{
+              nginx_ingress_controller_request_duration_seconds_bucket{{
                 host="{self.odoo_host}",
                 exported_namespace="{self.odoo_namespace}"
-              }[2m]
+              }}[2m]
             )
           )
         )
@@ -290,3 +290,4 @@ class PrometheusClient:
                 return int(val * 1000)
 
         return None
+

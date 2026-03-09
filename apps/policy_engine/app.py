@@ -18,7 +18,7 @@ app = FastAPI(title="SmartOps Policy Engine", version="0.5")
 # ============================================================
 # Paths + defaults
 # ============================================================
-AUDIT_PATH = Path(os.getenv("POLICY_ENGINE_AUDIT_PATH", "apps/policy_engine/audit/policy_decisions.jsonl"))
+AUDIT_PATH = Path(os.getenv("POLICY_ENGINE_AUDIT_PATH", "/policy_engine/audit/policy_decisions.jsonl"))
 AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # ============================================================

@@ -99,10 +99,16 @@ def build_summary_cards(
 
     replicas_ready = _coalesce(system_state.get("replicasReady"), 0)
     replicas_desired = _coalesce(system_state.get("replicasDesired"), 0)
-    verification_value = "Waiting"
-    verification_tone = "warning"
+    verification_value = "Not available"
+    verification_tone = "neutral"
 
-    if verification:
+    if policy_decision and str(policy_decision.get("decision", "")).lower() == "blocked":
+        verification_value = "Not required"
+        verification_tone = "neutral"
+    elif policy_decision and ((policy_decision.get("action_plan") or {}).get("verify")) and not verification:
+        verification_value = "Waiting"
+        verification_tone = "warning"
+    elif verification:
         verification_status = verification.get("status")
         overall = verification.get("overall")
 
@@ -413,14 +419,24 @@ def build_pipeline_stages(
         if target_replicas is not None:
             act_details.append({"label": "Target replicas", "value": _stringify(target_replicas)})
 
-    verify_status = "Waiting"
-    verify_summary = "Verification results will be shown after action execution."
+    verify_status = "Idle"
+    verify_summary = "Verification will appear after an action that requires execution checks."
     verify_details = [
-        {"label": "Status", "value": "Waiting"},
+        {"label": "Status", "value": "Not available"},
         {"label": "Overall", "value": "-"},
         {"label": "Ready replicas", "value": "-"},
         {"label": "Desired replicas", "value": "-"},
     ]
+
+    if policy_decision and ((policy_decision.get("action_plan") or {}).get("verify")) and not verification:
+        verify_status = "Waiting"
+        verify_summary = "Verification is waiting to start after action execution."
+        verify_details = [
+            {"label": "Status", "value": "Waiting"},
+            {"label": "Overall", "value": "-"},
+            {"label": "Ready replicas", "value": "-"},
+            {"label": "Desired replicas", "value": "-"},
+        ]
 
     if policy_decision and str(policy_decision.get("decision", "")).lower() == "blocked":
         verify_status = "Blocked"

@@ -49,10 +49,10 @@ def verify_erp_kpis() -> bool:
           0.95,
           sum by (le) (
             rate(
-              nginx_ingress_controller_request_duration_seconds_bucket{
+              nginx_ingress_controller_request_duration_seconds_bucket{{
                 host="{ODOO_INGRESS_HOST}",
                 exported_namespace="{SMARTOPS_NAMESPACE}"
-              }[2m]
+              }}[2m]
             )
           )
         )
@@ -63,11 +63,11 @@ def verify_erp_kpis() -> bool:
         f"""
         sum(
           rate(
-            nginx_ingress_controller_requests{
+            nginx_ingress_controller_requests{{
               host="{ODOO_INGRESS_HOST}",
               exported_namespace="{SMARTOPS_NAMESPACE}",
               status=~"5.."
-            }[1m]
+            }}[1m]
           )
         )
         """
@@ -182,5 +182,6 @@ async def verify_deployment_rollout(
             available_replicas=available,
             details=last,
         )
+
 
 
