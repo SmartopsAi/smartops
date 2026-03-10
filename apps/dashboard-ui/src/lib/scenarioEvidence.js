@@ -8,7 +8,7 @@ export const PP2_SCENARIO_EVIDENCE = {
     anomalyType: "RESOURCE",
     risk: "HIGH",
     score: 0.9,
-    policy: "scale_up_on_anomaly_resource_step_1",
+    policy: "Resource anomaly scale-up",
     action: "scale",
     targetDeployment: "smartops-erp-simulator",
     targetReplicas: 4,
@@ -17,7 +17,7 @@ export const PP2_SCENARIO_EVIDENCE = {
     rcaCause: "Resource Saturation",
     rcaProbability: 1.0,
     summary:
-      "SmartOps detected a resource anomaly, selected scale_up_on_anomaly_resource_step_1, executed scale to 4 replicas, and completed remediation successfully.",
+      "SmartOps detected a resource anomaly, selected the resource anomaly scale-up policy, executed scale to 4 replicas, and completed remediation successfully.",
   },
   "scenario-2": {
     key: "scenario-2",
@@ -28,7 +28,7 @@ export const PP2_SCENARIO_EVIDENCE = {
     anomalyType: "ERROR",
     risk: "HIGH",
     score: 0.9,
-    policy: "restart_on_anomaly_error",
+    policy: "Error anomaly restart",
     action: "restart",
     targetDeployment: "smartops-erp-simulator",
     result: "SUCCESS",
@@ -36,7 +36,7 @@ export const PP2_SCENARIO_EVIDENCE = {
     rcaCause: "Service Timeout",
     rcaProbability: 1.0,
     summary:
-      "SmartOps detected an error anomaly, selected restart_on_anomaly_error, executed restart, and completed remediation successfully.",
+      "SmartOps detected an error anomaly, selected the error anomaly restart policy, executed restart, and completed remediation successfully.",
   },
   "scenario-3": {
     key: "scenario-3",

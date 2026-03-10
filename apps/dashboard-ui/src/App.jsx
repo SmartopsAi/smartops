@@ -250,6 +250,47 @@ function App() {
   const isOdoo = selectedSystem === "odoo";
   const connectionLabel = error ? "Disconnected" : "Live API connected";
 
+
+  const humanizePolicyLabel = (policyName, guardrailReason = "") => {
+    const raw = String(policyName || "");
+    const guardrail = String(guardrailReason || "").toLowerCase();
+
+    if (!raw) {
+      return "Not available";
+    }
+
+    if (guardrail.includes("restart cooldown")) {
+      return "Restart cooldown guardrail";
+    }
+
+    const mapping = {
+      "scale_up_on_anomaly_resource_step_1": "Resource anomaly scale-up",
+      "restart_on_anomaly_error": "Error anomaly restart",
+      "manual_scale": "Manual scale",
+      "manual_restart": "Manual restart",
+    };
+
+    return mapping[raw] || raw.replace(/_/g, " ");
+  };
+
+  const humanizeActionLabel = (actionType, decision, guardrailReason = "") => {
+    const raw = String(actionType || "").toLowerCase();
+    const normalizedDecision = String(decision || "").toLowerCase();
+    const guardrail = String(guardrailReason || "").toLowerCase();
+
+    if (normalizedDecision === "blocked") {
+      if (guardrail.includes("restart cooldown")) {
+        return "Blocked by cooldown";
+      }
+      return "Blocked before execution";
+    }
+
+    if (raw === "scale") return "Scale";
+    if (raw === "restart") return "Restart";
+    if (!raw) return "No action";
+    return actionType;
+  };
+
   const formatDateTime = (value) => {
     if (!value) return "Not available";
     const date = new Date(value);
@@ -283,8 +324,8 @@ function App() {
           windowIds: [selectedWindowId],
           service: latestAnomaly?.service || "erp-simulator",
           anomalyType: String(latestAnomaly?.type || "").toUpperCase(),
-          policy: latestPolicyDecision?.policy,
-          action: latestPolicyDecision?.action_plan?.type,
+          policy: humanizePolicyLabel(latestPolicyDecision?.policy, latestPolicyDecision?.guardrail_reason),
+          action: humanizeActionLabel(latestPolicyDecision?.action_plan?.type, latestPolicyDecision?.decision, latestPolicyDecision?.guardrail_reason),
           targetReplicas: latestPolicyDecision?.action_plan?.scale?.replicas,
           rcaCause: latestRca?.rankedCauses?.[0]?.cause,
           rcaProbability: latestRca?.rankedCauses?.[0]?.probability,
@@ -324,7 +365,7 @@ function App() {
         tone: "info",
         title: "Policy decision",
         meta: latestPolicyDecision.ts_utc || latestPolicyDecision.ts || "Latest policy decision",
-        body: `Policy ${latestPolicyDecision.policy || "-"} | Decision ${latestPolicyDecision.decision || "-"} | Action ${(latestPolicyDecision.action_plan || {}).type || "none"}`,
+        body: `Policy ${humanizePolicyLabel(latestPolicyDecision.policy, latestPolicyDecision.guardrail_reason)} | Decision ${latestPolicyDecision.decision || "-"} | Action ${humanizeActionLabel((latestPolicyDecision.action_plan || {}).type, latestPolicyDecision.decision, latestPolicyDecision.guardrail_reason)}`,
       });
     }
 

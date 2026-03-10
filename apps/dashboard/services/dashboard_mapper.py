@@ -20,6 +20,32 @@ def _safe_round(value: Any, digits: int = 2) -> Any:
     return value
 
 
+def _humanize_policy_name(policy_name: Any) -> str:
+    value = _stringify(policy_name, "")
+    if not value:
+        return "-"
+    mapping = {
+        "scale_up_on_anomaly_resource_step_1": "Resource anomaly scale-up",
+        "restart_on_anomaly_error": "Error anomaly restart",
+        "manual_scale": "Manual scale",
+        "manual_restart": "Manual restart",
+    }
+    return mapping.get(value, value.replace("_", " ").title())
+
+
+def _humanize_decision_policy(policy_decision: Optional[Dict[str, Any]]) -> str:
+    if not policy_decision:
+        return "-"
+    decision_value = str(policy_decision.get("decision", "")).lower()
+    policy_label = _humanize_policy_name(policy_decision.get("policy"))
+    guardrail = _stringify(policy_decision.get("guardrail_reason"), "")
+
+    if decision_value == "blocked" and "restart cooldown" in guardrail.lower():
+        return "Restart cooldown guardrail"
+
+    return policy_label
+
+
 def build_system_state(
     *,
     system: str,
@@ -141,7 +167,7 @@ def build_summary_cards(
             },
             {
                 "label": "Policy",
-                "value": "No recent decision" if not policy_decision else policy_decision.get("policy", "-"),
+                "value": "No recent decision" if not policy_decision else _humanize_decision_policy(policy_decision),
                 "tone": "neutral" if not policy_decision else "info",
             },
             {
@@ -366,19 +392,19 @@ def build_pipeline_stages(
         if decision_value == "blocked":
             decide_status = "Blocked"
             decide_summary = (
-                f"Policy {policy_decision.get('policy', '-')} was blocked by guardrails."
+                f"Policy {_humanize_decision_policy(policy_decision)} was blocked by guardrails."
             )
         else:
             decide_status = "Decision"
             decide_summary = (
-                f"Policy {policy_decision.get('policy', '-')} returned "
+                f"Policy {_humanize_decision_policy(policy_decision)} returned "
                 f"{policy_decision.get('decision', '-')}"
             )
 
         decide_last_updated = policy_decision.get("ts_utc") or policy_decision.get("ts")
         decide_details = [
             {"label": "Decision", "value": _stringify(policy_decision.get("decision"))},
-            {"label": "Policy", "value": _stringify(policy_decision.get("policy"))},
+            {"label": "Policy", "value": _humanize_decision_policy(policy_decision)},
             {"label": "Priority", "value": _stringify(policy_decision.get("priority"))},
             {"label": "Guardrail", "value": _stringify(policy_decision.get("guardrail_reason"), "Allowed")},
         ]
@@ -397,7 +423,7 @@ def build_pipeline_stages(
         act_summary = "No remediation was executed because guardrails blocked the action."
         act_details = [
             {"label": "Action state", "value": "Blocked before execution"},
-            {"label": "Policy", "value": _stringify(policy_decision.get("policy"))},
+            {"label": "Policy", "value": _humanize_decision_policy(policy_decision)},
             {"label": "Guardrail", "value": _stringify(policy_decision.get("guardrail_reason"), "-")},
             {"label": "Execution", "value": "Not executed"},
         ]
