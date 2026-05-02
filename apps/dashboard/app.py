@@ -1527,6 +1527,51 @@ def api_policies():
         })
 
 
+@app.route("/api/policies/definitions")
+def api_policy_definitions():
+    try:
+        resp = requests.get(
+            f"{POLICY_ENGINE_URL}/v1/policies",
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return jsonify(resp.json()), resp.status_code
+    except Exception:
+        return jsonify({
+            "status": "error",
+            "message": "Policy Engine unavailable",
+            "policies": [],
+        }), 200
+
+
+@app.route("/api/policies/definitions/<policy_id>")
+def api_policy_definition(policy_id):
+    try:
+        resp = requests.get(
+            f"{POLICY_ENGINE_URL}/v1/policies/{policy_id}",
+            timeout=5,
+        )
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = {}
+
+        if resp.ok:
+            return jsonify(payload), resp.status_code
+
+        return jsonify({
+            "status": payload.get("status", "error"),
+            "message": payload.get("message") or payload.get("detail") or "Policy not found",
+            "policy": None,
+        }), resp.status_code
+    except Exception:
+        return jsonify({
+            "status": "error",
+            "message": "Policy Engine unavailable",
+            "policy": None,
+        }), 200
+
+
 @app.route("/api/policies/validate", methods=["POST"])
 def api_policies_validate():
     try:

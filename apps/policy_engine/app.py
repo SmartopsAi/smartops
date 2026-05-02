@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
+from apps.policy_engine.repository.json_policy_repository import (
+    get_policy_definition,
+    list_policy_definitions,
+)
 from apps.policy_engine.repository.policy_store import load_default_policies
 from apps.policy_engine.runtime.adapter import load_runtime_signals
 from apps.policy_engine.runtime.evaluator import evaluate_policies
@@ -251,6 +256,28 @@ def validate_policy(payload: dict = Body(default={})):
         }
 
     return validate_policy_dsl(payload.get("dsl"), payload.get("mode", "draft"))
+
+
+@app.get("/v1/policies")
+def policies_list():
+    return list_policy_definitions()
+
+
+@app.get("/v1/policies/{policy_id}")
+def policy_get(policy_id: str):
+    policy = get_policy_definition(policy_id)
+    if not policy:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "error",
+                "message": "Policy not found",
+            },
+        )
+    return {
+        "status": "ok",
+        "policy": policy,
+    }
 
 
 @app.get("/v1/admin/verify")
