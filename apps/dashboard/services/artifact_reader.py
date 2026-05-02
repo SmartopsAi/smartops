@@ -78,6 +78,8 @@ class ArtifactReader:
             "features": runtime_dir / "latest_features.json",
             "rca": runtime_dir / "latest_rca.json",
             "audit_log": audit_log_path,
+            "latest_anomaly_evidence": runtime_dir / "latest_anomaly_evidence.json",
+            "anomaly_history": runtime_dir / "anomaly_history.jsonl",
         }
 
         print("--- ARTIFACT READER DEBUG ---")
@@ -102,6 +104,35 @@ class ArtifactReader:
         except Exception as e:
             logger.error("Failed to read %s: %s", str(path), e)
             return None
+
+    # ----------------------------------------------------
+    # Persistent anomaly evidence
+    # ----------------------------------------------------
+
+    def get_latest_anomaly_evidence(self) -> Optional[dict]:
+        return self._read_json(Path(self.paths["latest_anomaly_evidence"]))
+
+    def get_anomaly_history(self, limit: int = 10) -> list[dict]:
+        path = Path(self.paths["anomaly_history"])
+        if not path.exists():
+            return []
+
+        try:
+            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception as e:
+            logger.debug("Failed reading anomaly history %s: %s", str(path), e)
+            return []
+
+        events = []
+        for line in lines[-limit:]:
+            if not line.strip():
+                continue
+            try:
+                events.append(json.loads(line))
+            except Exception:
+                continue
+
+        return list(reversed(events))
 
     # ----------------------------------------------------
     # Detection / Anomaly

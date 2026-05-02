@@ -14,10 +14,52 @@ import {
   verifyDeployment,
 } from "./lib/api";
 
+
+const getInitialDashboardUrlState = () => {
+  const params = new URLSearchParams(window.location.search);
+
+  const system = params.get("system") || "erp-simulator";
+  const scenarioKey = params.get("scenario_key") || "";
+  const windowId = params.get("window_id") || "";
+
+  return {
+    system,
+    scenarioKey,
+    windowId,
+  };
+};
+
+const syncDashboardUrlState = ({ system, scenarioKey, windowId }) => {
+  const params = new URLSearchParams(window.location.search);
+
+  if (system && system !== "erp-simulator") {
+    params.set("system", system);
+  } else {
+    params.delete("system");
+  }
+
+  if (system === "erp-simulator" && scenarioKey) {
+    params.set("scenario_key", scenarioKey);
+  } else {
+    params.delete("scenario_key");
+  }
+
+  if (system === "erp-simulator" && windowId) {
+    params.set("window_id", windowId);
+  } else {
+    params.delete("window_id");
+  }
+
+  const nextQuery = params.toString();
+  const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
+  window.history.replaceState({}, "", nextUrl);
+};
+
 function App() {
   const [selectedMode, setSelectedMode] = useState("live");
-  const [selectedSystem, setSelectedSystem] = useState("erp-simulator");
+  const [selectedSystem, setSelectedSystem] = useState(() => getInitialDashboardUrlState().system);
   const [dashboardState, setDashboardState] = useState(null);
+  const [liveDashboardState, setLiveDashboardState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -25,8 +67,8 @@ function App() {
   const [actionError, setActionError] = useState("");
   const [runningScenario, setRunningScenario] = useState("");
   const [runningManualAction, setRunningManualAction] = useState("");
-  const [selectedPp2ScenarioKey, setSelectedPp2ScenarioKey] = useState("scenario-1");
-  const [selectedWindowId, setSelectedWindowId] = useState("");
+  const [selectedPp2ScenarioKey, setSelectedPp2ScenarioKey] = useState(() => getInitialDashboardUrlState().scenarioKey);
+  const [selectedWindowId, setSelectedWindowId] = useState(() => getInitialDashboardUrlState().windowId);
   const [lastActionResult, setLastActionResult] = useState(null);
   const [lastVerificationResult, setLastVerificationResult] = useState(null);
 
@@ -48,11 +90,18 @@ function App() {
           ? overrides.windowId ?? selectedWindowId
           : "";
 
-      const payload = await getDashboardState(selectedSystem, 20, scenarioKey, windowId);
+      const isBoundReview = Boolean(scenarioKey || windowId);
+      const livePayload = await getDashboardState(selectedSystem, 20, "", "");
+      const payload = isBoundReview
+        ? await getDashboardState(selectedSystem, 20, scenarioKey, windowId)
+        : livePayload;
+
+      setLiveDashboardState(livePayload);
       setDashboardState(payload);
       setError("");
     } catch (err) {
       setDashboardState(null);
+      setLiveDashboardState(null);
       setError(err.message || "Failed to load dashboard state.");
     } finally {
       setLoading(false);
@@ -72,6 +121,15 @@ function App() {
 
     return () => clearInterval(timer);
   }, [selectedMode, selectedSystem, selectedPp2ScenarioKey, selectedWindowId]);
+
+  useEffect(() => {
+    syncDashboardUrlState({
+      system: selectedSystem,
+      scenarioKey: selectedPp2ScenarioKey,
+      windowId: selectedWindowId,
+    });
+  }, [selectedSystem, selectedPp2ScenarioKey, selectedWindowId]);
+
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -216,9 +274,31 @@ function App() {
         setLastActionResult(actionResult);
         setLastVerificationResult(verificationResult);
         setActionMessage("Manual restart action completed with live action and verification results.");
+      } else if (actionKey === "baseline-reset") {
+        const actionResult = await triggerAction({
+          action: "baseline-reset",
+          namespace: "smartops-dev",
+          name: "smartops-erp-simulator",
+          dry_run: false,
+        });
+
+        const verificationResult = await runVerificationWithRetry({
+          namespace: "smartops-dev",
+          deployment: "smartops-erp-simulator",
+          expected_replicas: 3,
+        });
+
+        setSelectedPp2ScenarioKey("");
+        setSelectedWindowId("");
+        setLastActionResult(actionResult);
+        setLastVerificationResult(verificationResult);
+        setActionMessage("Baseline reset completed. Chaos was cleared and the ERP simulator was returned to 3 replicas.");
       }
 
-      await loadDashboardState(false);
+      await loadDashboardState(false, {
+        scenarioKey: "",
+        windowId: "",
+      });
     } catch (err) {
       setActionError(err.message || "Manual DevOps action failed.");
     } finally {
@@ -229,15 +309,17 @@ function App() {
   const clearScenarioBinding = async () => {
     setActionMessage("");
     setActionError("");
+    setSelectedPp2ScenarioKey("");
     setSelectedWindowId("");
     setLastActionResult(null);
     setLastVerificationResult(null);
     await loadDashboardState(false, {
-      scenarioKey: selectedPp2ScenarioKey,
+      scenarioKey: "",
       windowId: "",
     });
   };
 
+  const liveSummaryCards = liveDashboardState?.summaryCards ?? dashboardState?.summaryCards ?? [];
   const summaryCards = dashboardState?.summaryCards ?? [];
   const pipelineStages = dashboardState?.pipelineStages ?? [];
   const anomalies = dashboardState?.signals?.anomalies ?? [];
@@ -245,6 +327,9 @@ function App() {
   const latestPolicyDecision = dashboardState?.latestPolicyDecision;
   const latestAnomaly = dashboardState?.latestAnomaly;
   const latestRca = dashboardState?.latestRca;
+  const lastAnomalyEvidence = dashboardState?.lastAnomalyEvidence;
+  const anomalyHistory = dashboardState?.anomalyHistory ?? [];
+  const liveSystemState = liveDashboardState?.systemState ?? dashboardState?.systemState;
   const systemState = dashboardState?.systemState;
   const verification = dashboardState?.verification;
   const isOdoo = selectedSystem === "odoo";
@@ -409,6 +494,23 @@ function App() {
       ? `${lastVerificationResult.ready_replicas}/${lastVerificationResult.desired_replicas}`
       : "N/A";
 
+  const evidencePolicy = lastAnomalyEvidence?.policy || {};
+  const evidenceAction = lastAnomalyEvidence?.action || {};
+  const evidenceTarget = evidenceAction?.target || {};
+  const evidenceVerification = lastAnomalyEvidence?.verification || {};
+  const evidenceRca = lastAnomalyEvidence?.rca || {};
+  const evidencePriorityLabel = evidencePolicy.priority_label || "Not available";
+  const evidencePriorityScore = evidencePolicy.priority_score ?? "Not available";
+  const evidencePolicyRank = evidencePolicy.priority ?? "Not available";
+  const evidenceVerificationResult =
+    evidenceVerification.overall === true
+      ? "Passed"
+      : evidenceVerification.overall === false
+      ? "Failed"
+      : "Pending / Not available";
+  const evidenceAffectedService =
+    latestRca?.rankedCauses?.[0]?.svc || evidenceRca.svc || "Not available";
+
   return (
     <div className={`app-shell app-shell--${selectedMode}`}>
       <div className="app-shell__inner">
@@ -563,13 +665,13 @@ function App() {
             <div className="section-heading">
               <div>
                 <p className="section-heading__eyebrow">Section A</p>
-                <h2>Current system summary</h2>
+                <h2>Live system summary</h2>
               </div>
-              {systemState ? (
+              {liveSystemState ? (
                 <div className="section-heading__meta">
-                  <span>{systemState.deployment}</span>
-                  <span>{systemState.namespace}</span>
-                  <span>Bound window: {selectedWindowId || "Current live state"}</span>
+                  <span>{liveSystemState.deployment}</span>
+                  <span>{liveSystemState.namespace}</span>
+                  <span>Live source: current cluster state</span>
                 </div>
               ) : null}
             </div>
@@ -579,19 +681,273 @@ function App() {
                 <h3>Loading summary</h3>
                 <p>Fetching current SmartOps state.</p>
               </div>
-            ) : summaryCards.length === 0 ? (
+            ) : liveSummaryCards.length === 0 ? (
               <div className="empty-state">
                 <h3>No summary data</h3>
                 <p>No live summary data is available for the selected system.</p>
               </div>
             ) : (
               <div className="summary-grid">
-                {summaryCards.map((card) => (
+                {liveSummaryCards.map((card) => (
                   <article key={card.label} className="summary-card">
                     <p className="summary-card__label">{card.label}</p>
                     <p className={`summary-card__value tone-${card.tone}`}>{card.value}</p>
                   </article>
                 ))}
+              </div>
+            )}
+          </section>
+
+          {selectedWindowId ? (
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <p className="section-heading__eyebrow">Section A1</p>
+                  <h2>Incident review mode active</h2>
+                </div>
+                <div className="section-heading__meta">
+                  <span>Resolved incident evidence</span>
+                  <span>Window: {selectedWindowId}</span>
+                </div>
+              </div>
+
+              <div className="empty-state">
+                <h3>
+                  Reviewing {selectedPp2ScenarioKey || "selected scenario"} evidence
+                </h3>
+                <p>
+                  The live system summary above shows the current Kubernetes state.
+                  The evidence below is intentionally preserved for the selected incident window,
+                  including anomaly detection, RCA, policy decision, remediation action, and verification.
+                </p>
+              </div>
+            </section>
+          ) : null}
+
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <p className="section-heading__eyebrow">Section A2</p>
+                <h2>Last anomaly evidence</h2>
+              </div>
+              <div className="section-heading__meta">
+                <span>Preserved after auto-healing</span>
+              </div>
+            </div>
+
+            {!lastAnomalyEvidence ? (
+              <div className="empty-state">
+                <h3>No previous anomaly recorded</h3>
+                <p>
+                  Once an anomaly is detected, SmartOps will preserve the last anomaly here
+                  even after the live system returns to normal.
+                </p>
+              </div>
+            ) : (
+              <div className="scenario-grid">
+                <article className="scenario-card">
+                  <h3>
+                    {String(lastAnomalyEvidence.type || "Unknown").toUpperCase()} anomaly on{" "}
+                    {lastAnomalyEvidence.service || "unknown service"}
+                  </h3>
+
+                  <div className="pipeline-card__meta">
+                    <span className="badge badge--active">
+                      Policy Priority: {evidencePriorityLabel}
+                    </span>
+                    <span>Priority Matrix Score: {evidencePriorityScore}</span>
+                    <span>Policy Rank: {evidencePolicyRank}</span>
+                  </div>
+
+                  <div className="detail-list">
+                    <div className="detail-row">
+                      <span className="detail-row__label">Event ID</span>
+                      <span className="detail-row__value">
+                        {lastAnomalyEvidence.eventId || "Not available"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Severity / Risk</span>
+                      <span className="detail-row__value">
+                        {lastAnomalyEvidence.severity || "Not available"} /{" "}
+                        {lastAnomalyEvidence.risk || "Not available"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Detected at</span>
+                      <span className="detail-row__value">
+                        {formatDateTime(lastAnomalyEvidence.ts_utc || lastAnomalyEvidence.timestamp)}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Score / Source</span>
+                      <span className="detail-row__value">
+                        {lastAnomalyEvidence.score ?? "Not available"} /{" "}
+                        {lastAnomalyEvidence.source || "agent-detect"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Detection</span>
+                      <span className="detail-row__value">
+                        Statistical = {String(lastAnomalyEvidence.detection?.statistical ?? false)},{" "}
+                        Isolation Forest = {String(lastAnomalyEvidence.detection?.isolation_forest ?? false)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <h4>Root Cause Analysis</h4>
+                  <div className="detail-list">
+                    <div className="detail-row">
+                      <span className="detail-row__label">Top cause</span>
+                      <span className="detail-row__value">
+                        {evidenceRca.topCause || "Not available"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Confidence</span>
+                      <span className="detail-row__value">
+                        {evidenceRca.confidence ?? "Not available"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Probability</span>
+                      <span className="detail-row__value">
+                        {evidenceRca.probability ?? "Not available"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Affected service</span>
+                      <span className="detail-row__value">{evidenceAffectedService}</span>
+                    </div>
+                  </div>
+
+                  <h4>Policy Decision and Priority Matrix</h4>
+                  <div className="detail-list">
+                    <div className="detail-row">
+                      <span className="detail-row__label">Decision</span>
+                      <span className="detail-row__value">
+                        {evidencePolicy.decision || "Not available"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Policy</span>
+                      <span className="detail-row__value">
+                        {humanizePolicyLabel(evidencePolicy.policy, evidencePolicy.guardrail)}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Guardrail</span>
+                      <span className="detail-row__value">
+                        {evidencePolicy.guardrail || "allowed"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Priority label</span>
+                      <span className="detail-row__value">
+                        <strong>{evidencePriorityLabel}</strong>
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Priority score</span>
+                      <span className="detail-row__value">{evidencePriorityScore}</span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Execution mode</span>
+                      <span className="detail-row__value">
+                        {evidencePolicy.execution_mode || "Not available"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <h4>Remediation Action</h4>
+                  <div className="detail-list">
+                    <div className="detail-row">
+                      <span className="detail-row__label">Action type</span>
+                      <span className="detail-row__value">
+                        {humanizeActionLabel(evidenceAction.type, evidencePolicy.decision, evidencePolicy.guardrail)}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Target</span>
+                      <span className="detail-row__value">
+                        {evidenceTarget.namespace || "Not available"}/
+                        {evidenceTarget.name || "Not available"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Target kind</span>
+                      <span className="detail-row__value">
+                        {evidenceTarget.kind || "Deployment"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Target replicas</span>
+                      <span className="detail-row__value">
+                        {evidenceAction.scale?.replicas ?? "Not applicable"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Dry run / Verify</span>
+                      <span className="detail-row__value">
+                        {String(evidenceAction.dry_run ?? false)} / {String(evidenceAction.verify ?? false)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <h4>Verification Result</h4>
+                  <div className="detail-list">
+                    <div className="detail-row">
+                      <span className="detail-row__label">Status</span>
+                      <span className="detail-row__value">
+                        {evidenceVerification.status || "Not available"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Result</span>
+                      <span className="detail-row__value">{evidenceVerificationResult}</span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Ready / Desired replicas</span>
+                      <span className="detail-row__value">
+                        {evidenceVerification.ready_replicas ?? "-"} /{" "}
+                        {evidenceVerification.desired_replicas ?? "-"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Source</span>
+                      <span className="detail-row__value">
+                        {evidenceVerification.source || "Not available"}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-row__label">Message</span>
+                      <span className="detail-row__value">
+                        {evidenceVerification.message || "No verification message available"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p>
+                    Explanation: This evidence is intentionally retained for audit,
+                    troubleshooting, and viva demonstration even after the live system
+                    has already recovered.
+                  </p>
+                </article>
+
+                <article className="scenario-card scenario-card--muted">
+                  <h3>Recent anomaly history</h3>
+                  {anomalyHistory.length === 0 ? (
+                    <p>No history records available.</p>
+                  ) : (
+                    anomalyHistory.slice(0, 5).map((event) => (
+                      <p key={event.eventId || event.timestamp}>
+                        {formatDateTime(event.ts_utc || event.timestamp)} —{" "}
+                        {String(event.type || "unknown").toUpperCase()} /{" "}
+                        {event.severity || "unknown"} / {event.service || "unknown"}
+                      </p>
+                    ))
+                  )}
+                </article>
               </div>
             )}
           </section>
@@ -796,6 +1152,15 @@ function App() {
                           {runningManualAction === "manual-restart"
                             ? "Running manual restart..."
                             : "Manual Restart"}
+                        </button>
+                        <button
+                          className="action-button"
+                          onClick={() => runManualDevopsAction("baseline-reset")}
+                          disabled={runningManualAction === "baseline-reset"}
+                        >
+                          {runningManualAction === "baseline-reset"
+                            ? "Returning to baseline..."
+                            : "Return to baseline (3 replicas + clear chaos)"}
                         </button>
                       </div>
                     </article>

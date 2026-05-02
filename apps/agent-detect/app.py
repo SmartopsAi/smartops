@@ -12,9 +12,10 @@ from live_detect import LiveAnomalyDetector
 # ===================================
 # CONFIGURATION
 # ===================================
-WINDOW_SECONDS = 60
-WARMUP_WINDOWS = 5
-RECOVERY_WINDOWS = 3
+WINDOW_SECONDS = int(os.getenv("WINDOW_SECONDS", "30"))
+WARMUP_WINDOWS = int(os.getenv("WARMUP_WINDOWS", "1"))
+RECOVERY_WINDOWS = int(os.getenv("RECOVERY_WINDOWS", "2"))
+FAST_WARNING_ENABLED = os.getenv("FAST_WARNING_ENABLED", "1") == "1"
 SIM_USE_GROUND_TRUTH = os.getenv("SIM_USE_GROUND_TRUTH", "0") == "1"
 
 PROFILE = os.getenv("PROFILE", "simulator")  # simulator | odoo
@@ -30,6 +31,56 @@ detector = LiveAnomalyDetector()
 
 RUNTIME_DIR = Path(os.getenv("SMARTOPS_RUNTIME_DIR", "/app/data/runtime"))
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+
+def append_jsonl(path: Path, event: dict) -> None:
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
+
+
+def persist_last_anomaly_evidence(
+    *,
+    service: str,
+    anomaly_type: str,
+    anomaly_final: bool,
+    risk: str,
+    features: dict,
+    result: dict,
+    metrics: dict,
+):
+    """
+    Preserve the latest anomaly evidence even after live state becomes normal.
+    This supports viva/demo explanation after auto-healing.
+    """
+    if not anomaly_final:
+        return
+
+    now = time.time()
+    event = {
+        "eventId": f"A-{int(now)}",
+        "timestamp": now,
+        "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+        "service": service,
+        "type": anomaly_type,
+        "severity": "CRITICAL" if risk == "HIGH" else "WARNING",
+        "risk": risk,
+        "score": 0.9,
+        "source": "agent-detect",
+        "profile": PROFILE,
+        "detection": {
+            "statistical": bool(result.get("statistical", False)),
+            "isolation_forest": bool(result.get("isolation_forest", False)),
+            "final": bool(result.get("final", False)),
+        },
+        "features": features,
+        "metrics": metrics,
+        "status": "RECORDED_FOR_EVIDENCE",
+    }
+
+    with open(RUNTIME_DIR / "latest_anomaly_evidence.json", "w", encoding="utf-8") as f:
+        json.dump(event, f, indent=2)
+
+    append_jsonl(RUNTIME_DIR / "anomaly_history.jsonl", event)
+
 
 window_count = 0
 clean_counter = 0
@@ -96,6 +147,38 @@ def main():
             continue
 
         # -------------------------------
+        # Fast-path warning
+        # -------------------------------
+        # This gives earlier warning for mission-critical cases before the
+        # full anomaly state is confirmed by the heavier model path.
+        fast_warning = False
+        fast_warning_reasons = []
+
+        if FAST_WARNING_ENABLED:
+            try:
+                error_max = float(features.get("error_count_max", 0.0) or 0.0)
+                modes_max = float(features.get("modes_enabled_max", 0.0) or 0.0)
+                cpu_spike = float(features.get("cpu_burn_ms_spike", 0.0) or 0.0)
+                cpu_max = float(features.get("cpu_burn_ms_max", 0.0) or 0.0)
+                latency_spike = float(features.get("latency_jitter_ms_spike", 0.0) or 0.0)
+                latency_max = float(features.get("latency_jitter_ms_max", 0.0) or 0.0)
+
+                if error_max > 0:
+                    fast_warning = True
+                    fast_warning_reasons.append("error_count increased")
+
+                if modes_max > 0 and (cpu_spike > 0 or cpu_max > 0):
+                    fast_warning = True
+                    fast_warning_reasons.append("resource chaos signal detected")
+
+                if latency_spike > 0 or latency_max > 0:
+                    fast_warning = True
+                    fast_warning_reasons.append("latency jitter increased")
+
+            except Exception as exc:
+                print(f"[WARN] Fast warning evaluation failed: {exc}")
+
+        # -------------------------------
         # Detection Models
         # -------------------------------
         result = detector.detect(features)
@@ -127,9 +210,9 @@ def main():
         else:
             # simulator
             if SIM_USE_GROUND_TRUTH:
-                raw_anomaly = error_ground_truth or resource_ground_truth or iso_result or stat_result
+                raw_anomaly = fast_warning or error_ground_truth or resource_ground_truth or iso_result or stat_result
             else:
-                raw_anomaly = iso_result or (stat_result and ground_truth_active)
+                raw_anomaly = fast_warning or iso_result or (stat_result and ground_truth_active)
         # -------------------------------
         # WARM-UP PROTECTION
         # -------------------------------
@@ -172,6 +255,7 @@ def main():
         print(f"Anomaly Detected: {anomaly_final}")
         print(f"  Statistical: {stat_result}")
         print(f"  IsolationForest: {iso_result}")
+        print(f"  FastWarning: {fast_warning} {fast_warning_reasons}")
         print(f"  RecoveryWindows: {clean_counter}/{RECOVERY_WINDOWS}")
 
         # -------------------------------
@@ -184,6 +268,10 @@ def main():
                 "anomaly": anomaly_final,
                 "statistical": stat_result,
                 "isolation_forest": iso_result,
+                "fast_warning": fast_warning,
+                "fast_warning_reasons": fast_warning_reasons,
+                "window_seconds": WINDOW_SECONDS,
+                "warmup_windows": WARMUP_WINDOWS,
                 "recovering": anomaly_state and not raw_anomaly,
                 "recovery_windows": clean_counter,
                 "required_recovery_windows": RECOVERY_WINDOWS
@@ -227,6 +315,17 @@ def main():
         if anomaly_final:
             if current_window_key != last_sent_window_key:
                 send_anomaly_signal(service_name, anomaly_type, anomaly_final, risk)
+
+                persist_last_anomaly_evidence(
+                    service=service_name,
+                    anomaly_type=anomaly_type,
+                    anomaly_final=anomaly_final,
+                    risk=risk,
+                    features=features,
+                    result=result,
+                    metrics=metrics,
+                )
+
                 last_sent_window_key = current_window_key
             last_sent_state = True
         else:

@@ -27,6 +27,94 @@ logger = logging.getLogger("dashboard")
 
 reader = ArtifactReader()
 
+def build_persistent_anomaly_evidence(anomaly=None, rca=None, policy_decision=None, verification=None):
+    """
+    Build a dashboard-local persistent anomaly evidence object from the live
+    anomaly/RCA/policy/verification pipeline.
+
+    This is required in Kubernetes because agent-detect and dashboard-api run
+    in separate pods and do not share the same container filesystem.
+    """
+    if not anomaly:
+        return None
+
+    metadata = anomaly.get("metadata") or {}
+    ranked_causes = (rca or {}).get("rankedCauses") or []
+    top_cause = ranked_causes[0] if ranked_causes else {}
+
+    action_plan = (policy_decision or {}).get("action_plan") or {}
+    target = action_plan.get("target") or {}
+
+    return {
+        "eventId": f"A-{anomaly.get('windowId', 'unknown')}",
+        "windowId": anomaly.get("windowId"),
+        "timestamp": (policy_decision or {}).get("ts_utc"),
+        "ts_utc": (policy_decision or {}).get("ts_utc"),
+        "service": anomaly.get("service"),
+        "type": anomaly.get("type"),
+        "severity": "CRITICAL" if metadata.get("risk") == "HIGH" else "WARNING",
+        "risk": metadata.get("risk"),
+        "score": anomaly.get("score"),
+        "source": metadata.get("source", "dashboard-api"),
+        "profile": metadata.get("profile"),
+        "rca": {
+            "topCause": top_cause.get("cause"),
+            "probability": top_cause.get("probability"),
+            "confidence": (rca or {}).get("confidence"),
+        },
+        "policy": {
+            "decision": (policy_decision or {}).get("decision"),
+            "policy": (policy_decision or {}).get("policy"),
+            "guardrail": (policy_decision or {}).get("guardrail_reason"),
+            "priority": (policy_decision or {}).get("priority"),
+            "priority_label": (policy_decision or {}).get("priority_label"),
+            "priority_score": (policy_decision or {}).get("priority_score"),
+            "execution_mode": (policy_decision or {}).get("execution_mode"),
+        },
+        "action": {
+            "type": action_plan.get("type"),
+            "target": target,
+            "scale": action_plan.get("scale"),
+            "verify": action_plan.get("verify"),
+            "dry_run": action_plan.get("dry_run"),
+        },
+        "verification": verification,
+        "status": "RECORDED_BY_DASHBOARD_API",
+    }
+
+
+def persist_dashboard_anomaly_evidence(evidence):
+    """
+    Store last anomaly evidence locally in dashboard-api. This preserves the
+    latest anomaly for demo/audit view after live state returns to healthy.
+    """
+    if not evidence:
+        return
+
+    try:
+        latest_path = reader.paths.get("latest_anomaly_evidence")
+        history_path = reader.paths.get("anomaly_history")
+
+        if latest_path:
+            latest_path.parent.mkdir(parents=True, exist_ok=True)
+            latest_path.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+
+        if history_path:
+            history_path.parent.mkdir(parents=True, exist_ok=True)
+            existing = set()
+            if history_path.exists():
+                for line in history_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if evidence.get("eventId") and evidence.get("eventId") in line:
+                        existing.add(evidence.get("eventId"))
+
+            if evidence.get("eventId") not in existing:
+                with history_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(evidence) + "\n")
+    except Exception as exc:
+        app.logger.warning("Failed to persist dashboard anomaly evidence: %s", exc)
+
+
+
 MODE = "k8s" if os.environ.get("KUBERNETES_SERVICE_HOST") else "local"
 DEFAULT_NAMESPACE = os.getenv("SMARTOPS_NAMESPACE", "smartops-dev")
 POLICY_ENGINE_URL = os.getenv("POLICY_ENGINE_URL", "http://127.0.0.1:5051").rstrip("/")
@@ -1220,6 +1308,24 @@ def trigger_action():
             result = orchestrator.trigger_scale(ns, name, replicas, dry_run)
         elif action_type == "restart":
             result = orchestrator.trigger_restart(ns, name, dry_run)
+        elif action_type == "baseline-reset":
+            baseline_result = _reset_simulator_baseline(namespace=ns)
+            result = {
+                "operation": "baseline-reset",
+                "deployment": {
+                    "status": "SUCCESS" if baseline_result.get("ok") else "FAILED",
+                    "attempts": 1,
+                    "duration_seconds": None,
+                    "result": {
+                        "namespace": ns,
+                        "name": name,
+                        "replicas": BASELINE_REPLICAS,
+                        "dry_run": False,
+                        "baseline_reset": True,
+                    },
+                },
+                "baseline": baseline_result,
+            }
         else:
             return jsonify({"status": "error", "message": "Invalid action"}), 400
 
@@ -1362,6 +1468,19 @@ def api_anomalies():
         "status": "ok",
         "latest_event": anomaly.__dict__ if anomaly else None,
         "feature_breakdown": features.__dict__ if features else None,
+    })
+
+
+@app.route("/api/anomalies/evidence")
+def api_anomaly_evidence():
+    limit = request.args.get("limit", default=10, type=int)
+    latest = reader.get_latest_anomaly_evidence()
+    history = reader.get_anomaly_history(limit=limit)
+
+    return jsonify({
+        "status": "ok",
+        "latest": latest,
+        "history": history,
     })
 
 
@@ -1649,6 +1768,20 @@ def api_dashboard_state():
         verification=verification,
     )
 
+    last_anomaly_evidence = reader.get_latest_anomaly_evidence()
+
+    if effective_anomaly:
+        dashboard_evidence = build_persistent_anomaly_evidence(
+            anomaly=effective_anomaly,
+            rca=effective_rca,
+            policy_decision=effective_policy,
+            verification=verification,
+        )
+        persist_dashboard_anomaly_evidence(dashboard_evidence)
+        last_anomaly_evidence = dashboard_evidence or last_anomaly_evidence
+
+    anomaly_history = reader.get_anomaly_history(limit=5)
+
     return jsonify({
         "status": "ok",
         "mode": MODE,
@@ -1667,6 +1800,8 @@ def api_dashboard_state():
         "lastActionResult": manual_action_result,
         "lastVerificationResult": manual_verification_result,
         "manualStateUpdatedAt": manual_state.get("updatedAt"),
+        "lastAnomalyEvidence": last_anomaly_evidence,
+        "anomalyHistory": anomaly_history,
     })
 
 

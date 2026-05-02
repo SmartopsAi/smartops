@@ -127,8 +127,38 @@ def build_summary_cards(
     replicas_desired = _coalesce(system_state.get("replicasDesired"), 0)
     verification_value = "Not available"
     verification_tone = "neutral"
+    anomaly_state_value = "No active anomaly"
+    anomaly_state_tone = "neutral"
 
-    if policy_decision and str(policy_decision.get("decision", "")).lower() == "blocked":
+    decision_value = str((policy_decision or {}).get("decision", "")).lower()
+
+    if not anomaly:
+        anomaly_state_value = "No active anomaly"
+        anomaly_state_tone = "neutral"
+    elif decision_value == "blocked":
+        anomaly_state_value = "Blocked by guardrail"
+        anomaly_state_tone = "warning"
+    elif policy_decision and ((policy_decision.get("action_plan") or {}).get("verify")) and not verification:
+        anomaly_state_value = "Remediation in progress"
+        anomaly_state_tone = "warning"
+    elif verification:
+        verification_status = verification.get("status")
+        overall = verification.get("overall")
+
+        if verification_status == "pending" or overall is None:
+            anomaly_state_value = "Remediation in progress"
+            anomaly_state_tone = "warning"
+        elif overall is True:
+            anomaly_state_value = "Resolved after remediation"
+            anomaly_state_tone = "success"
+        else:
+            anomaly_state_value = "Anomaly detected"
+            anomaly_state_tone = "warning"
+    else:
+        anomaly_state_value = "Anomaly detected"
+        anomaly_state_tone = "warning"
+
+    if policy_decision and decision_value == "blocked":
         verification_value = "Not required"
         verification_tone = "neutral"
     elif policy_decision and ((policy_decision.get("action_plan") or {}).get("verify")) and not verification:
@@ -157,8 +187,8 @@ def build_summary_cards(
             },
             {
                 "label": "Anomaly State",
-                "value": "No active anomaly" if not anomaly else "Anomaly detected",
-                "tone": "neutral" if not anomaly else "warning",
+                "value": anomaly_state_value,
+                "tone": anomaly_state_tone,
             },
             {
                 "label": "RCA State",

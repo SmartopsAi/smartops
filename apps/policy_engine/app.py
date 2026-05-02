@@ -12,6 +12,7 @@ from apps.policy_engine.repository.policy_store import load_default_policies
 from apps.policy_engine.runtime.adapter import load_runtime_signals
 from apps.policy_engine.runtime.evaluator import evaluate_policies
 from apps.policy_engine.runtime.guardrails import apply_guardrails
+from apps.policy_engine.runtime.priority_matrix import calculate_priority
 
 app = FastAPI(title="SmartOps Policy Engine", version="0.5")
 
@@ -186,13 +187,24 @@ def _evaluate_once(payload: dict | None = None) -> dict:
         return decision
 
     action_plan = _build_action_plan(chosen, signal)
+    priority_result = calculate_priority(signal, action_plan)
+
     allowed, reason = apply_guardrails(action_plan)
+
+    if priority_result["execution_mode"] == "OBSERVE_ONLY":
+        allowed = False
+        reason = "priority matrix selected observe-only mode"
 
     decision = {
         "ts_utc": _utc_now(),
         "decision": "action" if allowed else "blocked",
         "policy": chosen.name,
         "priority": chosen.priority,
+        "priority_label": priority_result["priority_label"],
+        "priority_score": priority_result["priority_score"],
+        "execution_mode": priority_result["execution_mode"],
+        "priority_explanation": priority_result["explanation"],
+        "priority_factors": priority_result["factors"],
         "guardrail_reason": reason,
         "action_plan": action_plan if allowed else None,
     }
