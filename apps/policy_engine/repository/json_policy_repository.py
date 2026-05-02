@@ -3,18 +3,49 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from apps.policy_engine.dsl.parser import parse_policies
 from apps.policy_engine.repository.policy_store import DEFAULT_POLICY_PATH
+from apps.policy_engine.runtime.policy_validator import validate_policy_dsl
 
 POLICY_STORE_ENV = "POLICY_STORE_PATH"
 DEFAULT_POLICY_STORE_PATH = "/policy_engine/store/policies.json"
 
 
+class PolicyRepositoryError(Exception):
+    def __init__(self, status_code: int, message: str, validation: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+        self.validation = validation
+
+
 def get_policy_store_path() -> Path:
     return Path(os.getenv(POLICY_STORE_ENV, DEFAULT_POLICY_STORE_PATH))
+
+
+def get_policy_store_dir() -> Path:
+    return get_policy_store_path().parent
+
+
+def get_policy_backup_dir() -> Path:
+    return get_policy_store_dir() / "policy_backups"
+
+
+def get_policy_change_audit_path() -> Path:
+    return get_policy_store_dir() / "policy_change_audit.jsonl"
+
+
+def _utc_now() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _slugify_policy_id(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", value.strip()).strip("_")
+    return normalized or "policy"
 
 
 def _condition_to_dict(condition: Any) -> dict[str, Any]:
@@ -136,6 +167,7 @@ def _normalize_store_policy(policy: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(policy.get("enabled", True)),
         "status": policy.get("status") or ("active" if policy.get("enabled", True) else "disabled"),
         "version": _safe_int(policy.get("version") or 1),
+        "description": policy.get("description"),
         "created_at": policy.get("created_at"),
         "updated_at": policy.get("updated_at"),
         "updated_by": policy.get("updated_by"),
@@ -185,6 +217,336 @@ def _load_store_policies(store_path: Path) -> dict[str, Any]:
         "count": len(policies),
         "policies": policies,
         "warnings": [],
+    }
+
+
+def _load_store_payload_for_write() -> dict[str, Any]:
+    store_path = get_policy_store_path()
+
+    if not store_path.exists():
+        bootstrap = _load_bootstrap_policies()
+        if bootstrap.get("status") != "ok":
+            raise PolicyRepositoryError(
+                500,
+                bootstrap.get("message") or "Failed to initialize policy store from bootstrap policies.",
+            )
+        return {
+            "schema_version": 1,
+            "created_at": _utc_now(),
+            "updated_at": _utc_now(),
+            "source": "bootstrap-default-policy",
+            "policies": bootstrap.get("policies", []),
+        }
+
+    try:
+        payload = json.loads(store_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise PolicyRepositoryError(500, f"Policy store could not be loaded safely: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise PolicyRepositoryError(500, "Policy store JSON must be an object.")
+
+    raw_policies = payload.get("policies")
+    if not isinstance(raw_policies, list):
+        raise PolicyRepositoryError(500, "Policy store JSON must contain a policies list.")
+
+    payload["policies"] = [
+        _normalize_store_policy(policy)
+        for policy in raw_policies
+        if isinstance(policy, dict) and (policy.get("id") or policy.get("name"))
+    ]
+    payload.setdefault("schema_version", 1)
+    payload.setdefault("source", "policy-store")
+    return payload
+
+
+def write_store_atomic(data: dict[str, Any]) -> None:
+    store_path = get_policy_store_path()
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = store_path.with_name(f".{store_path.name}.tmp")
+
+    encoded = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+    os.replace(tmp_path, store_path)
+
+
+def backup_store(reason: str) -> str | None:
+    store_path = get_policy_store_path()
+    if not store_path.exists():
+        return None
+
+    backup_dir = get_policy_backup_dir()
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    safe_reason = _slugify_policy_id(reason or "change")[:60]
+    backup_path = backup_dir / f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S%fZ')}_{safe_reason}.json"
+    backup_path.write_text(store_path.read_text(encoding="utf-8"), encoding="utf-8")
+    return str(backup_path)
+
+
+def append_change_audit(event: dict[str, Any]) -> None:
+    audit_path = get_policy_change_audit_path()
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    with audit_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _policy_index(policies: list[dict[str, Any]], policy_id: str) -> int | None:
+    for index, policy in enumerate(policies):
+        if policy.get("id") == policy_id:
+            return index
+    return None
+
+
+def _validation_to_single_policy(validation: dict[str, Any], requested_name: str) -> dict[str, Any]:
+    if not validation.get("valid"):
+        raise PolicyRepositoryError(400, "Policy DSL validation failed.", validation)
+
+    parsed_policies = ((validation.get("parsed") or {}).get("policies") or [])
+    if len(parsed_policies) != 1:
+        raise PolicyRepositoryError(
+            400,
+            "Policy DSL must contain exactly one POLICY block for create/update.",
+            validation,
+        )
+
+    parsed_policy = parsed_policies[0]
+    parsed_name = parsed_policy.get("name")
+    if parsed_name and parsed_name != requested_name:
+        validation = {
+            **validation,
+            "errors": [
+                *validation.get("errors", []),
+                {
+                    "field": "name",
+                    "message": f"Request name '{requested_name}' must match DSL policy name '{parsed_name}'.",
+                },
+            ],
+        }
+        raise PolicyRepositoryError(400, "Policy name does not match DSL policy name.", validation)
+
+    return parsed_policy
+
+
+def _build_policy_record(
+    *,
+    policy_id: str,
+    name: str,
+    dsl: str,
+    validation: dict[str, Any],
+    parsed_policy: dict[str, Any],
+    updated_by: str,
+    description: str | None = None,
+    created_at: str | None = None,
+    version: int = 1,
+) -> dict[str, Any]:
+    now = _utc_now()
+    return {
+        "id": policy_id,
+        "name": name,
+        "description": description,
+        "dsl": dsl,
+        "enabled": False,
+        "status": "draft",
+        "version": version,
+        "created_at": created_at or now,
+        "updated_at": now,
+        "updated_by": updated_by,
+        "source": "operator",
+        "deleted": False,
+        "validation": validation,
+        "parsed": {
+            "priority": parsed_policy.get("priority"),
+            "action": parsed_policy.get("action"),
+            "conditions": parsed_policy.get("conditions", []),
+        },
+    }
+
+
+def _audit_event(
+    *,
+    operation: str,
+    policy: dict[str, Any],
+    updated_by: str,
+    reason: str | None,
+    valid: bool,
+) -> dict[str, Any]:
+    return {
+        "ts_utc": _utc_now(),
+        "operation": operation,
+        "policy_id": policy.get("id"),
+        "policy_name": policy.get("name"),
+        "updated_by": updated_by,
+        "version": policy.get("version"),
+        "reason": reason or "",
+        "valid": valid,
+    }
+
+
+def create_policy(payload: dict[str, Any], updated_by: str) -> dict[str, Any]:
+    name = str(payload.get("name") or "").strip()
+    dsl = str(payload.get("dsl") or "").strip()
+    if not name:
+        raise PolicyRepositoryError(400, "Policy name is required.")
+    if not dsl:
+        raise PolicyRepositoryError(400, "Policy DSL is required.")
+
+    policy_id = _slugify_policy_id(str(payload.get("id") or name))
+    store = _load_store_payload_for_write()
+    policies = store["policies"]
+
+    existing_index = _policy_index(policies, policy_id)
+    if existing_index is not None and not policies[existing_index].get("deleted"):
+        raise PolicyRepositoryError(409, f"Policy id '{policy_id}' already exists.")
+
+    validation = validate_policy_dsl(dsl, "draft")
+    parsed_policy = _validation_to_single_policy(validation, name)
+    policy = _build_policy_record(
+        policy_id=policy_id,
+        name=name,
+        dsl=dsl,
+        validation=validation,
+        parsed_policy=parsed_policy,
+        updated_by=updated_by,
+        description=payload.get("description"),
+    )
+
+    if existing_index is None:
+        policies.append(policy)
+    else:
+        policies[existing_index] = policy
+
+    store["updated_at"] = _utc_now()
+    store["source"] = "policy-store"
+    write_store_atomic(store)
+    append_change_audit(
+        _audit_event(
+            operation="create",
+            policy=policy,
+            updated_by=updated_by,
+            reason=payload.get("reason"),
+            valid=True,
+        )
+    )
+    return policy
+
+
+def update_policy(policy_id: str, payload: dict[str, Any], updated_by: str) -> dict[str, Any]:
+    store = _load_store_payload_for_write()
+    if not get_policy_store_path().exists():
+        write_store_atomic(store)
+
+    policies = store["policies"]
+    index = _policy_index(policies, policy_id)
+    if index is None or policies[index].get("deleted"):
+        raise PolicyRepositoryError(404, "Policy not found.")
+
+    current = policies[index]
+    name = str(payload.get("name") or current.get("name") or "").strip()
+    dsl = str(payload.get("dsl") or "").strip()
+    if not name:
+        raise PolicyRepositoryError(400, "Policy name is required.")
+    if not dsl:
+        raise PolicyRepositoryError(400, "Policy DSL is required.")
+
+    validation = validate_policy_dsl(dsl, "draft")
+    parsed_policy = _validation_to_single_policy(validation, name)
+    backup_store(payload.get("reason") or f"update_{policy_id}")
+
+    updated = _build_policy_record(
+        policy_id=policy_id,
+        name=name,
+        dsl=dsl,
+        validation=validation,
+        parsed_policy=parsed_policy,
+        updated_by=updated_by,
+        description=payload.get("description", current.get("description")),
+        created_at=current.get("created_at"),
+        version=_safe_int(current.get("version"), 1) + 1,
+    )
+
+    policies[index] = updated
+    store["updated_at"] = _utc_now()
+    store["source"] = "policy-store"
+    write_store_atomic(store)
+    append_change_audit(
+        _audit_event(
+            operation="update",
+            policy=updated,
+            updated_by=updated_by,
+            reason=payload.get("reason"),
+            valid=True,
+        )
+    )
+    return updated
+
+
+def soft_delete_policy(policy_id: str, updated_by: str, reason: str | None = None) -> dict[str, Any]:
+    store = _load_store_payload_for_write()
+    if not get_policy_store_path().exists():
+        write_store_atomic(store)
+
+    policies = store["policies"]
+    index = _policy_index(policies, policy_id)
+    if index is None or policies[index].get("deleted"):
+        raise PolicyRepositoryError(404, "Policy not found.")
+
+    backup_store(reason or f"delete_{policy_id}")
+    policy = {
+        **policies[index],
+        "enabled": False,
+        "status": "deleted",
+        "deleted": True,
+        "updated_at": _utc_now(),
+        "updated_by": updated_by,
+        "version": _safe_int(policies[index].get("version"), 1) + 1,
+    }
+
+    policies[index] = policy
+    store["updated_at"] = _utc_now()
+    store["source"] = "policy-store"
+    write_store_atomic(store)
+    append_change_audit(
+        _audit_event(
+            operation="delete",
+            policy=policy,
+            updated_by=updated_by,
+            reason=reason,
+            valid=bool((policy.get("validation") or {}).get("valid")),
+        )
+    )
+    return policy
+
+
+def list_change_audit(limit: int = 50) -> dict[str, Any]:
+    audit_path = get_policy_change_audit_path()
+    if not audit_path.exists():
+        return {
+            "status": "ok",
+            "source": "policy-change-audit",
+            "audit_path": str(audit_path),
+            "count": 0,
+            "events": [],
+        }
+
+    lines = audit_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    tail = lines[-max(1, limit) :]
+    events = []
+    for line in tail:
+        try:
+            events.append(json.loads(line))
+        except Exception:
+            continue
+
+    return {
+        "status": "ok",
+        "source": "policy-change-audit",
+        "audit_path": str(audit_path),
+        "count": len(events),
+        "events": events,
     }
 
 

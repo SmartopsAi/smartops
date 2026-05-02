@@ -1544,6 +1544,25 @@ def api_policy_definitions():
         }), 200
 
 
+@app.route("/api/policies/change-audit")
+def api_policy_change_audit():
+    limit = request.args.get("limit", default=50, type=int)
+    try:
+        resp = requests.get(
+            f"{POLICY_ENGINE_URL}/v1/policies/change-audit",
+            params={"limit": limit},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return jsonify(resp.json()), resp.status_code
+    except Exception:
+        return jsonify({
+            "status": "error",
+            "message": "Policy Engine unavailable",
+            "events": [],
+        }), 200
+
+
 @app.route("/api/policies/definitions/<policy_id>")
 def api_policy_definition(policy_id):
     try:
@@ -1570,6 +1589,64 @@ def api_policy_definition(policy_id):
             "message": "Policy Engine unavailable",
             "policy": None,
         }), 200
+
+
+def _admin_auth_error_response(exc: AdminAuthError):
+    return jsonify({
+        "status": "error",
+        "message": exc.message,
+    }), exc.status_code
+
+
+def _proxy_policy_write(method: str, path: str, payload: dict | None = None):
+    try:
+        admin_headers = get_admin_headers_from_request(request)
+    except AdminAuthError as exc:
+        return _admin_auth_error_response(exc)
+
+    try:
+        resp = requests.request(
+            method,
+            f"{POLICY_ENGINE_URL}{path}",
+            json=payload or {},
+            headers=admin_headers,
+            timeout=10,
+        )
+        try:
+            response_payload = resp.json()
+        except Exception:
+            response_payload = {
+                "status": "error",
+                "message": "Policy Engine returned a non-JSON response.",
+            }
+        return jsonify(response_payload), resp.status_code
+    except Exception:
+        return jsonify({
+            "status": "error",
+            "message": "Policy Engine unavailable",
+        }), 502
+
+
+@app.route("/api/policies/definitions", methods=["POST"])
+def api_policy_definition_create():
+    data = request.get_json(silent=True) or {}
+    return _proxy_policy_write("POST", "/v1/policies", data)
+
+
+@app.route("/api/policies/definitions/<policy_id>", methods=["PUT"])
+def api_policy_definition_update(policy_id):
+    data = request.get_json(silent=True) or {}
+    return _proxy_policy_write("PUT", f"/v1/policies/{policy_id}", data)
+
+
+@app.route("/api/policies/definitions/<policy_id>", methods=["DELETE"])
+def api_policy_definition_delete(policy_id):
+    data = request.get_json(silent=True) or {}
+    if "updated_by" not in data and request.args.get("updated_by"):
+        data["updated_by"] = request.args.get("updated_by")
+    if "reason" not in data and request.args.get("reason"):
+        data["reason"] = request.args.get("reason")
+    return _proxy_policy_write("DELETE", f"/v1/policies/{policy_id}", data)
 
 
 @app.route("/api/policies/validate", methods=["POST"])

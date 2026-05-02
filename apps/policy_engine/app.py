@@ -10,8 +10,13 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from apps.policy_engine.repository.json_policy_repository import (
+    PolicyRepositoryError,
+    create_policy,
     get_policy_definition,
+    list_change_audit,
     list_policy_definitions,
+    soft_delete_policy,
+    update_policy,
 )
 from apps.policy_engine.repository.policy_store import load_default_policies
 from apps.policy_engine.runtime.adapter import load_runtime_signals
@@ -263,6 +268,29 @@ def policies_list():
     return list_policy_definitions()
 
 
+def _repository_error_response(exc: PolicyRepositoryError):
+    content = {
+        "status": "error",
+        "message": exc.message,
+    }
+    if exc.validation is not None:
+        content["validation"] = exc.validation
+    return JSONResponse(status_code=exc.status_code, content=content)
+
+
+def _require_policy_payload(payload: dict | None) -> dict:
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise PolicyRepositoryError(400, "Payload must be a JSON object.")
+    return payload
+
+
+@app.get("/v1/policies/change-audit")
+def policies_change_audit(limit: int = 50):
+    return list_change_audit(limit=limit)
+
+
 @app.get("/v1/policies/{policy_id}")
 def policy_get(policy_id: str):
     policy = get_policy_definition(policy_id)
@@ -278,6 +306,55 @@ def policy_get(policy_id: str):
         "status": "ok",
         "policy": policy,
     }
+
+
+@app.post("/v1/policies")
+def policy_create(request: Request, payload: dict = Body(default={})):
+    require_admin_key(request)
+    try:
+        data = _require_policy_payload(payload)
+        updated_by = str(data.get("updated_by") or "operator")
+        policy = create_policy(data, updated_by=updated_by)
+        return {
+            "status": "ok",
+            "operation": "create",
+            "policy": policy,
+        }
+    except PolicyRepositoryError as exc:
+        return _repository_error_response(exc)
+
+
+@app.put("/v1/policies/{policy_id}")
+def policy_update(policy_id: str, request: Request, payload: dict = Body(default={})):
+    require_admin_key(request)
+    try:
+        data = _require_policy_payload(payload)
+        updated_by = str(data.get("updated_by") or "operator")
+        policy = update_policy(policy_id, data, updated_by=updated_by)
+        return {
+            "status": "ok",
+            "operation": "update",
+            "policy": policy,
+        }
+    except PolicyRepositoryError as exc:
+        return _repository_error_response(exc)
+
+
+@app.delete("/v1/policies/{policy_id}")
+def policy_delete(policy_id: str, request: Request, payload: dict = Body(default={})):
+    require_admin_key(request)
+    try:
+        data = _require_policy_payload(payload)
+        updated_by = str(data.get("updated_by") or request.query_params.get("updated_by") or "operator")
+        reason = data.get("reason") or request.query_params.get("reason") or ""
+        policy = soft_delete_policy(policy_id, updated_by=updated_by, reason=reason)
+        return {
+            "status": "ok",
+            "operation": "delete",
+            "policy": policy,
+        }
+    except PolicyRepositoryError as exc:
+        return _repository_error_response(exc)
 
 
 @app.get("/v1/admin/verify")
