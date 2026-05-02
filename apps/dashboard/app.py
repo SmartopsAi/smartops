@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request
 
 from services.artifact_reader import ArtifactReader
 from services.admin_auth import AdminAuthError, get_admin_headers_from_request
+from services.policy_draft_ai import PolicyDraftAIError, generate_policy_draft
 from services.smartops_clients import OrchestratorClient
 from services.prometheus_client import PrometheusClient
 from services.dashboard_mapper import (
@@ -1628,6 +1629,38 @@ def _admin_auth_error_response(exc: AdminAuthError):
     }), exc.status_code
 
 
+def _get_unmatched_anomaly_by_id(unmatched_id: str):
+    try:
+        resp = requests.get(
+            f"{POLICY_ENGINE_URL}/v1/policies/unmatched-anomalies",
+            params={"limit": 500},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception:
+        return None, ("Policy Engine unavailable", 502)
+
+    for item in payload.get("items", []):
+        if item.get("id") == unmatched_id:
+            return item, None
+
+    return None, ("Unmatched anomaly not found", 404)
+
+
+def _validate_policy_draft(draft_dsl: str):
+    try:
+        resp = requests.post(
+            f"{POLICY_ENGINE_URL}/v1/policies/validate",
+            json={"dsl": draft_dsl, "mode": "draft"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json(), None
+    except Exception:
+        return None, ("Policy Engine validation unavailable", 502)
+
+
 def _proxy_policy_write(method: str, path: str, payload: dict | None = None):
     try:
         admin_headers = get_admin_headers_from_request(request)
@@ -1655,6 +1688,75 @@ def _proxy_policy_write(method: str, path: str, payload: dict | None = None):
             "status": "error",
             "message": "Policy Engine unavailable",
         }), 502
+
+
+@app.route("/api/policies/generate-draft", methods=["POST"])
+def api_policy_generate_draft():
+    try:
+        get_admin_headers_from_request(request)
+    except AdminAuthError as exc:
+        return _admin_auth_error_response(exc)
+
+    data = request.get_json(silent=True) or {}
+    unmatched_id = str(data.get("unmatched_anomaly_id") or "").strip()
+    if not unmatched_id:
+        return jsonify({
+            "status": "error",
+            "message": "unmatched_anomaly_id is required.",
+        }), 400
+
+    unmatched_anomaly, unmatched_error = _get_unmatched_anomaly_by_id(unmatched_id)
+    if unmatched_error:
+        message, status_code = unmatched_error
+        return jsonify({
+            "status": "error",
+            "message": message,
+        }), status_code
+
+    try:
+        draft = generate_policy_draft(
+            unmatched_anomaly,
+            constraints=data.get("constraints") if isinstance(data.get("constraints"), dict) else {},
+        )
+    except PolicyDraftAIError as exc:
+        return jsonify({
+            "status": "error",
+            "message": exc.message,
+            "saved": False,
+            "deployed": False,
+            "enabled": False,
+        }), exc.status_code
+
+    validation, validation_error = _validate_policy_draft(draft["draft_dsl"])
+    if validation_error:
+        message, status_code = validation_error
+        return jsonify({
+            "status": "error",
+            "message": message,
+            "saved": False,
+            "deployed": False,
+            "enabled": False,
+            "draft_dsl": draft["draft_dsl"],
+            "validation": None,
+            "unmatched_anomaly": unmatched_anomaly,
+            "model": draft["model"],
+        }), status_code
+
+    status = "ok" if validation.get("valid") else "validation_failed"
+    return jsonify({
+        "status": status,
+        "saved": False,
+        "deployed": False,
+        "enabled": False,
+        "draft_dsl": draft["draft_dsl"],
+        "validation": validation,
+        "unmatched_anomaly": unmatched_anomaly,
+        "model": draft["model"],
+        "warnings": [
+            "AI-generated policies require human review before saving or deployment.",
+            "This endpoint does not save, enable, reload, deploy, or execute generated policies.",
+        ],
+    }), 200
 
 
 @app.route("/api/policies/definitions", methods=["POST"])
