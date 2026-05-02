@@ -35,6 +35,16 @@ spec:
                 secretKeyRef:
                   name: smartops-admin-secret
                   key: SMARTOPS_ADMIN_API_KEY
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-openai-secret
+                  key: OPENAI_API_KEY
+            - name: OPENAI_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-openai-secret
+                  key: OPENAI_MODEL
           resources:
             requests:
               cpu: "100m"
