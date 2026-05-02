@@ -12,16 +12,19 @@ from fastapi.responses import JSONResponse
 from apps.policy_engine.repository.json_policy_repository import (
     PolicyRepositoryError,
     create_policy,
+    disable_policy,
+    enable_policy,
     get_policy_definition,
     list_change_audit,
     list_policy_definitions,
+    reload_policies,
     soft_delete_policy,
     update_policy,
 )
-from apps.policy_engine.repository.policy_store import load_default_policies
 from apps.policy_engine.runtime.adapter import load_runtime_signals
 from apps.policy_engine.runtime.evaluator import evaluate_policies
 from apps.policy_engine.runtime.guardrails import apply_guardrails
+from apps.policy_engine.runtime.policy_loader import load_runtime_policies
 from apps.policy_engine.runtime.priority_matrix import calculate_priority
 from apps.policy_engine.runtime.policy_validator import validate_policy_dsl
 from apps.policy_engine.security import require_admin_key
@@ -153,7 +156,7 @@ def _merge_raw_preserve_detection(signal: dict, raw_patch: dict) -> None:
 # Core evaluation logic
 # ============================================================
 def _evaluate_once(payload: dict | None = None) -> dict:
-    policies = load_default_policies()
+    policies = load_runtime_policies()
 
     # If caller provided a signal payload, evaluate ONLY that payload
     if payload and isinstance(payload.get("signal"), dict) and payload["signal"]:
@@ -286,9 +289,29 @@ def _require_policy_payload(payload: dict | None) -> dict:
     return payload
 
 
+def _request_actor_and_reason(data: dict, request: Request) -> tuple[str, str]:
+    updated_by = str(data.get("updated_by") or request.query_params.get("updated_by") or "operator")
+    reason = str(data.get("reason") or request.query_params.get("reason") or "")
+    return updated_by, reason
+
+
 @app.get("/v1/policies/change-audit")
 def policies_change_audit(limit: int = 50):
     return list_change_audit(limit=limit)
+
+
+@app.post("/v1/policies/reload")
+def policies_reload(request: Request, payload: dict = Body(default={})):
+    require_admin_key(request)
+    try:
+        data = _require_policy_payload(payload)
+        updated_by, reason = _request_actor_and_reason(data, request)
+        result = reload_policies(updated_by=updated_by, reason=reason)
+        if result.get("status") != "ok":
+            return JSONResponse(status_code=400, content=result)
+        return result
+    except PolicyRepositoryError as exc:
+        return _repository_error_response(exc)
 
 
 @app.get("/v1/policies/{policy_id}")
@@ -352,6 +375,60 @@ def policy_delete(policy_id: str, request: Request, payload: dict = Body(default
             "status": "ok",
             "operation": "delete",
             "policy": policy,
+        }
+    except PolicyRepositoryError as exc:
+        return _repository_error_response(exc)
+
+
+@app.post("/v1/policies/{policy_id}/enable")
+def policy_enable(policy_id: str, request: Request, payload: dict = Body(default={})):
+    require_admin_key(request)
+    try:
+        data = _require_policy_payload(payload)
+        updated_by, reason = _request_actor_and_reason(data, request)
+        policy = enable_policy(policy_id, updated_by=updated_by, reason=reason)
+        active_count = list_policy_definitions().get("policies", [])
+        active_policy_count = len(
+            [
+                item
+                for item in active_count
+                if item.get("enabled") is True
+                and item.get("deleted") is False
+                and item.get("status") == "active"
+            ]
+        )
+        return {
+            "status": "ok",
+            "operation": "enable",
+            "policy": policy,
+            "active_policy_count": active_policy_count,
+        }
+    except PolicyRepositoryError as exc:
+        return _repository_error_response(exc)
+
+
+@app.post("/v1/policies/{policy_id}/disable")
+def policy_disable(policy_id: str, request: Request, payload: dict = Body(default={})):
+    require_admin_key(request)
+    try:
+        data = _require_policy_payload(payload)
+        updated_by, reason = _request_actor_and_reason(data, request)
+        policy = disable_policy(policy_id, updated_by=updated_by, reason=reason)
+        active_count = list_policy_definitions().get("policies", [])
+        active_policy_count = len(
+            [
+                item
+                for item in active_count
+                if item.get("enabled") is True
+                and item.get("deleted") is False
+                and item.get("status") == "active"
+            ]
+        )
+        return {
+            "status": "ok",
+            "operation": "disable",
+            "policy": policy,
+            "active_policy_count": active_policy_count,
         }
     except PolicyRepositoryError as exc:
         return _repository_error_response(exc)

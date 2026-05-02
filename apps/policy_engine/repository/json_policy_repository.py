@@ -369,20 +369,24 @@ def _build_policy_record(
 def _audit_event(
     *,
     operation: str,
-    policy: dict[str, Any],
+    policy: dict[str, Any] | None = None,
     updated_by: str,
     reason: str | None,
     valid: bool,
+    success: bool | None = None,
+    active_policy_count: int | None = None,
 ) -> dict[str, Any]:
     return {
         "ts_utc": _utc_now(),
         "operation": operation,
-        "policy_id": policy.get("id"),
-        "policy_name": policy.get("name"),
+        "policy_id": (policy or {}).get("id"),
+        "policy_name": (policy or {}).get("name"),
         "updated_by": updated_by,
-        "version": policy.get("version"),
+        "version": (policy or {}).get("version"),
         "reason": reason or "",
+        "active_policy_count": active_policy_count,
         "valid": valid,
+        "success": valid if success is None else success,
     }
 
 
@@ -548,6 +552,207 @@ def list_change_audit(limit: int = 50) -> dict[str, Any]:
         "count": len(events),
         "events": events,
     }
+
+
+def get_active_policy_definitions() -> dict[str, Any]:
+    payload = list_policy_definitions()
+    policies = [
+        policy
+        for policy in payload.get("policies", [])
+        if policy.get("enabled") is True
+        and policy.get("deleted") is False
+        and policy.get("status") == "active"
+        and (policy.get("validation") or {}).get("valid") is True
+        and bool(policy.get("dsl"))
+    ]
+
+    return {
+        "status": payload.get("status", "ok"),
+        "source": payload.get("source", "policy-store"),
+        "store_path": payload.get("store_path", str(get_policy_store_path())),
+        "active_policy_count": len(policies),
+        "policies": policies,
+        "warnings": payload.get("warnings", []),
+    }
+
+
+def _combined_dsl(policies: list[dict[str, Any]]) -> str:
+    return "\n\n".join(str(policy.get("dsl") or "").strip() for policy in policies if policy.get("dsl"))
+
+
+def validate_active_policy_set(candidate_policies: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    if candidate_policies is None:
+        active_payload = get_active_policy_definitions()
+        source = active_payload.get("source", "policy-store")
+        if source == "policy-store":
+            candidate_policies = active_payload.get("policies", [])
+        else:
+            candidate_policies = []
+    else:
+        source = "policy-store"
+
+    active_count = len(candidate_policies)
+    if active_count == 0:
+        bootstrap = _load_bootstrap_policies()
+        candidate_policies = bootstrap.get("policies", [])
+        source = "default-policy-fallback"
+
+    dsl = _combined_dsl(candidate_policies)
+    validation = validate_policy_dsl(dsl, "draft")
+    return {
+        "valid": bool(validation.get("valid")),
+        "source": source,
+        "active_policy_count": active_count,
+        "validation": validation,
+    }
+
+
+def _replace_policy(policies: list[dict[str, Any]], updated_policy: dict[str, Any]) -> None:
+    index = _policy_index(policies, str(updated_policy.get("id")))
+    if index is None:
+        policies.append(updated_policy)
+    else:
+        policies[index] = updated_policy
+
+
+def enable_policy(policy_id: str, updated_by: str, reason: str | None = None) -> dict[str, Any]:
+    store = _load_store_payload_for_write()
+    if not get_policy_store_path().exists():
+        write_store_atomic(store)
+
+    policies = store["policies"]
+    index = _policy_index(policies, policy_id)
+    if index is None:
+        raise PolicyRepositoryError(404, "Policy not found.")
+
+    current = policies[index]
+    if current.get("deleted"):
+        raise PolicyRepositoryError(400, "Soft-deleted policies cannot be enabled.")
+    if not current.get("dsl"):
+        raise PolicyRepositoryError(400, "Policy DSL is required before enabling.")
+
+    selected_validation = validate_policy_dsl(current.get("dsl"), "draft")
+    if not selected_validation.get("valid"):
+        raise PolicyRepositoryError(400, "Policy DSL validation failed.", selected_validation)
+
+    candidate = {
+        **current,
+        "enabled": True,
+        "status": "active",
+        "deleted": False,
+        "validation": selected_validation,
+    }
+
+    active_candidates = [
+        policy
+        for policy in policies
+        if policy.get("id") != policy_id
+        and policy.get("enabled") is True
+        and policy.get("deleted") is False
+        and policy.get("status") == "active"
+        and (policy.get("validation") or {}).get("valid") is True
+        and bool(policy.get("dsl"))
+    ]
+    active_candidates.append(candidate)
+    active_validation = validate_active_policy_set(active_candidates)
+    if not active_validation.get("valid"):
+        raise PolicyRepositoryError(
+            400,
+            "Active policy set validation failed.",
+            active_validation.get("validation"),
+        )
+
+    backup_store(reason or f"enable_{policy_id}")
+    enabled_policy = {
+        **candidate,
+        "version": _safe_int(current.get("version"), 1) + 1,
+        "updated_at": _utc_now(),
+        "updated_by": updated_by,
+    }
+    _replace_policy(policies, enabled_policy)
+    store["updated_at"] = _utc_now()
+    store["source"] = "policy-store"
+    write_store_atomic(store)
+    append_change_audit(
+        _audit_event(
+            operation="enable",
+            policy=enabled_policy,
+            updated_by=updated_by,
+            reason=reason,
+            valid=True,
+            success=True,
+            active_policy_count=active_validation.get("active_policy_count"),
+        )
+    )
+    return enabled_policy
+
+
+def disable_policy(policy_id: str, updated_by: str, reason: str | None = None) -> dict[str, Any]:
+    store = _load_store_payload_for_write()
+    if not get_policy_store_path().exists():
+        write_store_atomic(store)
+
+    policies = store["policies"]
+    index = _policy_index(policies, policy_id)
+    if index is None:
+        raise PolicyRepositoryError(404, "Policy not found.")
+
+    current = policies[index]
+    backup_store(reason or f"disable_{policy_id}")
+    disabled_policy = {
+        **current,
+        "enabled": False,
+        "status": "deleted" if current.get("deleted") else "disabled",
+        "version": _safe_int(current.get("version"), 1) + 1,
+        "updated_at": _utc_now(),
+        "updated_by": updated_by,
+    }
+    _replace_policy(policies, disabled_policy)
+    store["updated_at"] = _utc_now()
+    store["source"] = "policy-store"
+    write_store_atomic(store)
+
+    active_count = get_active_policy_definitions().get("active_policy_count", 0)
+    append_change_audit(
+        _audit_event(
+            operation="disable",
+            policy=disabled_policy,
+            updated_by=updated_by,
+            reason=reason,
+            valid=True,
+            success=True,
+            active_policy_count=active_count,
+        )
+    )
+    return disabled_policy
+
+
+def reload_policies(updated_by: str, reason: str | None = None) -> dict[str, Any]:
+    active_validation = validate_active_policy_set()
+    valid = bool(active_validation.get("valid"))
+    operation = "reload" if valid else "reload_failed"
+    append_change_audit(
+        _audit_event(
+            operation=operation,
+            policy=None,
+            updated_by=updated_by,
+            reason=reason,
+            valid=valid,
+            success=valid,
+            active_policy_count=active_validation.get("active_policy_count"),
+        )
+    )
+
+    response = {
+        "status": "ok" if valid else "error",
+        "operation": "reload",
+        "active_policy_count": active_validation.get("active_policy_count", 0),
+        "source": active_validation.get("source"),
+        "validation": active_validation.get("validation"),
+    }
+    if not valid:
+        response["message"] = "Active policy set validation failed."
+    return response
 
 
 def list_policy_definitions() -> dict[str, Any]:

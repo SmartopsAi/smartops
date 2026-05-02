@@ -1649,6 +1649,24 @@ def api_policy_definition_delete(policy_id):
     return _proxy_policy_write("DELETE", f"/v1/policies/{policy_id}", data)
 
 
+@app.route("/api/policies/definitions/<policy_id>/enable", methods=["POST"])
+def api_policy_definition_enable(policy_id):
+    data = request.get_json(silent=True) or {}
+    return _proxy_policy_write("POST", f"/v1/policies/{policy_id}/enable", data)
+
+
+@app.route("/api/policies/definitions/<policy_id>/disable", methods=["POST"])
+def api_policy_definition_disable(policy_id):
+    data = request.get_json(silent=True) or {}
+    return _proxy_policy_write("POST", f"/v1/policies/{policy_id}/disable", data)
+
+
+@app.route("/api/policies/reload", methods=["POST"])
+def api_policies_reload():
+    data = request.get_json(silent=True) or {}
+    return _proxy_policy_write("POST", "/v1/policies/reload", data)
+
+
 @app.route("/api/policies/validate", methods=["POST"])
 def api_policies_validate():
     try:
