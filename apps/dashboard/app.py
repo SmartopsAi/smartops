@@ -1525,6 +1525,36 @@ def api_policies():
         })
 
 
+@app.route("/api/policies/validate", methods=["POST"])
+def api_policies_validate():
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception:
+        data = {}
+
+    try:
+        resp = requests.post(
+            f"{POLICY_ENGINE_URL}/v1/policies/validate",
+            json=data,
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return jsonify(resp.json())
+    except Exception:
+        return jsonify({
+            "valid": False,
+            "errors": [
+                {
+                    "field": "policy_engine",
+                    "message": "Policy Engine unavailable",
+                }
+            ],
+            "warnings": [],
+            "parsed": None,
+            "safety": {},
+        }), 200
+
+
 @app.route("/api/services/metrics")
 def api_service_metrics():
     namespace = DEFAULT_NAMESPACE

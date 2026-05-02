@@ -13,6 +13,7 @@ from apps.policy_engine.runtime.adapter import load_runtime_signals
 from apps.policy_engine.runtime.evaluator import evaluate_policies
 from apps.policy_engine.runtime.guardrails import apply_guardrails
 from apps.policy_engine.runtime.priority_matrix import calculate_priority
+from apps.policy_engine.runtime.policy_validator import validate_policy_dsl
 
 app = FastAPI(title="SmartOps Policy Engine", version="0.5")
 
@@ -228,6 +229,27 @@ def evaluate(payload: dict = Body(default={})):
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Payload must be a JSON object")
     return _evaluate_once(payload)
+
+
+@app.post("/v1/policies/validate")
+def validate_policy(payload: dict = Body(default={})):
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        return {
+            "valid": False,
+            "errors": [{"field": "body", "message": "Payload must be a JSON object"}],
+            "warnings": [],
+            "parsed": None,
+            "safety": {
+                "allowed_actions": False,
+                "allowed_scope": False,
+                "replica_bounds": False,
+                "guardrails_present": False,
+            },
+        }
+
+    return validate_policy_dsl(payload.get("dsl"), payload.get("mode", "draft"))
 
 
 @app.get("/v1/policy/audit/latest")
