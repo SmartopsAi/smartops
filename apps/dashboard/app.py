@@ -1,3 +1,4 @@
+import json
 import os
 import time
 import logging
@@ -8,6 +9,7 @@ import requests
 from flask import Flask, jsonify, request
 
 from services.artifact_reader import ArtifactReader
+from services.admin_auth import AdminAuthError, get_admin_headers_from_request
 from services.smartops_clients import OrchestratorClient
 from services.prometheus_client import PrometheusClient
 from services.dashboard_mapper import (
@@ -1553,6 +1555,55 @@ def api_policies_validate():
             "parsed": None,
             "safety": {},
         }), 200
+
+
+@app.route("/api/admin/verify")
+def api_admin_verify():
+    try:
+        admin_headers = get_admin_headers_from_request(request)
+    except AdminAuthError as exc:
+        return jsonify({
+            "status": "error",
+            "admin": False,
+            "message": exc.message,
+        }), exc.status_code
+
+    payload = {
+        "status": "ok",
+        "admin": True,
+        "service": "smartops-dashboard-api",
+    }
+
+    try:
+        resp = requests.get(
+            f"{POLICY_ENGINE_URL}/v1/admin/verify",
+            headers=admin_headers,
+            timeout=3,
+        )
+        try:
+            policy_engine_body = resp.json()
+        except Exception:
+            policy_engine_body = {}
+
+        if resp.ok:
+            payload["policy_engine"] = {
+                "status": policy_engine_body.get("status", "ok"),
+                "admin": policy_engine_body.get("admin"),
+                "service": policy_engine_body.get("service", "policy-engine"),
+            }
+        else:
+            payload["policy_engine"] = {
+                "status": "error",
+                "status_code": resp.status_code,
+                "message": policy_engine_body.get("detail") or "Policy Engine admin verification failed.",
+            }
+    except Exception:
+        payload["policy_engine"] = {
+            "status": "unavailable",
+            "message": "Policy Engine unavailable",
+        }
+
+    return jsonify(payload), 200
 
 
 @app.route("/api/services/metrics")

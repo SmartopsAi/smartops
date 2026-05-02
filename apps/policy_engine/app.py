@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 
 from apps.policy_engine.repository.policy_store import load_default_policies
 from apps.policy_engine.runtime.adapter import load_runtime_signals
@@ -14,6 +14,7 @@ from apps.policy_engine.runtime.evaluator import evaluate_policies
 from apps.policy_engine.runtime.guardrails import apply_guardrails
 from apps.policy_engine.runtime.priority_matrix import calculate_priority
 from apps.policy_engine.runtime.policy_validator import validate_policy_dsl
+from apps.policy_engine.security import require_admin_key
 
 app = FastAPI(title="SmartOps Policy Engine", version="0.5")
 
@@ -250,6 +251,16 @@ def validate_policy(payload: dict = Body(default={})):
         }
 
     return validate_policy_dsl(payload.get("dsl"), payload.get("mode", "draft"))
+
+
+@app.get("/v1/admin/verify")
+def admin_verify(request: Request):
+    require_admin_key(request)
+    return {
+        "status": "ok",
+        "admin": True,
+        "service": "policy-engine",
+    }
 
 
 @app.get("/v1/policy/audit/latest")
