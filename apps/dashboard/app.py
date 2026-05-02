@@ -15,6 +15,13 @@ from services.policy_draft_ai import (
     generate_policy_draft,
     normalize_action_targets,
 )
+from services.notification_service import (
+    NotificationServiceError,
+    get_notification_settings,
+    list_notification_audit,
+    mock_send_notification,
+    save_notification_settings,
+)
 from services.smartops_clients import OrchestratorClient
 from services.prometheus_client import PrometheusClient
 from services.dashboard_mapper import (
@@ -1631,6 +1638,88 @@ def _admin_auth_error_response(exc: AdminAuthError):
         "status": "error",
         "message": exc.message,
     }), exc.status_code
+
+
+def _notification_error_response(exc: NotificationServiceError):
+    return jsonify({
+        "status": "error",
+        "message": exc.message,
+    }), exc.status_code
+
+
+@app.route("/api/notifications/settings")
+def api_notification_settings_get():
+    return jsonify({
+        "status": "ok",
+        "settings": get_notification_settings(),
+    })
+
+
+@app.route("/api/notifications/settings", methods=["POST"])
+def api_notification_settings_post():
+    try:
+        get_admin_headers_from_request(request)
+    except AdminAuthError as exc:
+        return _admin_auth_error_response(exc)
+
+    data = request.get_json(silent=True) or {}
+    updated_by = str(data.get("updated_by") or "operator")
+    try:
+        settings = save_notification_settings(data, updated_by=updated_by)
+    except NotificationServiceError as exc:
+        return _notification_error_response(exc)
+
+    return jsonify({
+        "status": "ok",
+        "settings": settings,
+    })
+
+
+@app.route("/api/notifications/audit")
+def api_notification_audit():
+    limit = request.args.get("limit", default=50, type=int)
+    return jsonify(list_notification_audit(limit=limit))
+
+
+@app.route("/api/notifications/test", methods=["POST"])
+def api_notification_test():
+    try:
+        get_admin_headers_from_request(request)
+    except AdminAuthError as exc:
+        return _admin_auth_error_response(exc)
+
+    data = request.get_json(silent=True) or {}
+    data["operation"] = "mock_send"
+    data.setdefault("alert_type", "TEST")
+    data.setdefault("title", "SmartOps test notification")
+    data.setdefault("message", "SmartOps test notification")
+    updated_by = str(data.get("updated_by") or "operator")
+
+    try:
+        result = mock_send_notification(data, updated_by=updated_by)
+    except NotificationServiceError as exc:
+        return _notification_error_response(exc)
+
+    return jsonify(result)
+
+
+@app.route("/api/notifications/send", methods=["POST"])
+def api_notification_send():
+    try:
+        get_admin_headers_from_request(request)
+    except AdminAuthError as exc:
+        return _admin_auth_error_response(exc)
+
+    data = request.get_json(silent=True) or {}
+    data["operation"] = "mock_send"
+    updated_by = str(data.get("updated_by") or "operator")
+
+    try:
+        result = mock_send_notification(data, updated_by=updated_by)
+    except NotificationServiceError as exc:
+        return _notification_error_response(exc)
+
+    return jsonify(result)
 
 
 def _get_unmatched_anomaly_by_id(unmatched_id: str):
