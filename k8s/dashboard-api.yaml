@@ -45,6 +45,36 @@ spec:
                 secretKeyRef:
                   name: smartops-openai-secret
                   key: OPENAI_MODEL
+            - name: SMTP_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-smtp-secret
+                  key: SMTP_HOST
+            - name: SMTP_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-smtp-secret
+                  key: SMTP_PORT
+            - name: SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-smtp-secret
+                  key: SMTP_USERNAME
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-smtp-secret
+                  key: SMTP_PASSWORD
+            - name: SMTP_FROM_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-smtp-secret
+                  key: SMTP_FROM_EMAIL
+            - name: SMTP_USE_TLS
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-smtp-secret
+                  key: SMTP_USE_TLS
           resources:
             requests:
               cpu: "100m"
