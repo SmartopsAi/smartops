@@ -21,6 +21,12 @@ from apps.policy_engine.repository.json_policy_repository import (
     soft_delete_policy,
     update_policy,
 )
+from apps.policy_engine.repository.unmatched_anomaly_store import (
+    ALLOWED_STATUSES,
+    list_unmatched_anomalies,
+    record_unmatched_anomaly,
+    update_unmatched_status,
+)
 from apps.policy_engine.runtime.adapter import load_runtime_signals
 from apps.policy_engine.runtime.evaluator import evaluate_policies
 from apps.policy_engine.runtime.guardrails import apply_guardrails
@@ -198,6 +204,10 @@ def _evaluate_once(payload: dict | None = None) -> dict:
 
     if not chosen:
         decision = {"ts_utc": _utc_now(), "decision": "no_action", "reason": "no policy matched"}
+        try:
+            record_unmatched_anomaly(signal, reason="no policy matched")
+        except Exception:
+            pass
         _audit(decision)
         return decision
 
@@ -298,6 +308,52 @@ def _request_actor_and_reason(data: dict, request: Request) -> tuple[str, str]:
 @app.get("/v1/policies/change-audit")
 def policies_change_audit(limit: int = 50):
     return list_change_audit(limit=limit)
+
+
+@app.get("/v1/policies/unmatched-anomalies")
+def policies_unmatched_anomalies(limit: int = 50, status: str | None = None):
+    return list_unmatched_anomalies(limit=limit, status=status)
+
+
+@app.post("/v1/policies/unmatched-anomalies/{unmatched_id}/status")
+def policies_unmatched_status(unmatched_id: str, request: Request, payload: dict = Body(default={})):
+    require_admin_key(request)
+    try:
+        data = _require_policy_payload(payload)
+        status = str(data.get("status") or "").strip()
+        if status not in ALLOWED_STATUSES:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": f"Status must be one of: {', '.join(sorted(ALLOWED_STATUSES))}",
+                },
+            )
+
+        updated_by, reason = _request_actor_and_reason(data, request)
+        record = update_unmatched_status(
+            unmatched_id=unmatched_id,
+            status=status,
+            updated_by=updated_by,
+            reason=reason,
+            draft_policy_id=data.get("draft_policy_id"),
+        )
+        if not record:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "status": "error",
+                    "message": "Unmatched anomaly not found",
+                },
+            )
+
+        return {
+            "status": "ok",
+            "operation": "update_unmatched_status",
+            "item": record,
+        }
+    except PolicyRepositoryError as exc:
+        return _repository_error_response(exc)
 
 
 @app.post("/v1/policies/reload")

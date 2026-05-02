@@ -1563,6 +1563,36 @@ def api_policy_change_audit():
         }), 200
 
 
+@app.route("/api/policies/unmatched-anomalies")
+def api_policy_unmatched_anomalies():
+    limit = request.args.get("limit", default=50, type=int)
+    status = request.args.get("status", default=None, type=str)
+    params = {"limit": limit}
+    if status:
+        params["status"] = status
+
+    try:
+        resp = requests.get(
+            f"{POLICY_ENGINE_URL}/v1/policies/unmatched-anomalies",
+            params=params,
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return jsonify(resp.json()), resp.status_code
+    except Exception:
+        return jsonify({
+            "status": "error",
+            "message": "Policy Engine unavailable",
+            "items": [],
+        }), 200
+
+
+@app.route("/api/policies/unmatched-anomalies/<unmatched_id>/status", methods=["POST"])
+def api_policy_unmatched_status(unmatched_id):
+    data = request.get_json(silent=True) or {}
+    return _proxy_policy_write("POST", f"/v1/policies/unmatched-anomalies/{unmatched_id}/status", data)
+
+
 @app.route("/api/policies/definitions/<policy_id>")
 def api_policy_definition(policy_id):
     try:
