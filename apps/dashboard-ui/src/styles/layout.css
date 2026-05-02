@@ -1,0 +1,30 @@
+.app-shell {
+  padding: 36px 112px 36px 24px;
+}
+
+.control-center__content {
+  max-width: 1480px;
+}
+
+.app-main {
+  gap: 28px;
+}
+
+.panel {
+  border-radius: 20px;
+}
+
+.app-header {
+  border-radius: 20px;
+  margin-bottom: 28px;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 92px 16px 24px;
+  }
+
+  .control-center__content {
+    max-width: 100%;
+  }
+}

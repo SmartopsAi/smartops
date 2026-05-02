@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+import "./styles/layout.css";
+import "./styles/dock.css";
+import "./styles/cards.css";
+import "./styles/pages.css";
+import HoverDock from "./components/HoverDock";
+import DemoDashboard from "./pages/DemoDashboard";
+import EvidenceTimeline from "./pages/EvidenceTimeline";
+import Integrations from "./pages/Integrations";
+import LiveDashboard from "./pages/LiveDashboard";
+import PolicyStudio from "./pages/PolicyStudio";
+import Settings from "./pages/Settings";
 import {
   DASHBOARD_ENV,
   DASHBOARD_MODES,
@@ -56,6 +67,7 @@ const syncDashboardUrlState = ({ system, scenarioKey, windowId }) => {
 };
 
 function App() {
+  const [activePage, setActivePage] = useState("live");
   const [selectedMode, setSelectedMode] = useState("live");
   const [selectedSystem, setSelectedSystem] = useState(() => getInitialDashboardUrlState().system);
   const [dashboardState, setDashboardState] = useState(null);
@@ -321,6 +333,7 @@ function App() {
 
   const liveSummaryCards = liveDashboardState?.summaryCards ?? dashboardState?.summaryCards ?? [];
   const summaryCards = dashboardState?.summaryCards ?? [];
+  const livePipelineStages = liveDashboardState?.pipelineStages ?? [];
   const pipelineStages = dashboardState?.pipelineStages ?? [];
   const anomalies = dashboardState?.signals?.anomalies ?? [];
   const rcas = dashboardState?.signals?.rcas ?? [];
@@ -513,13 +526,14 @@ function App() {
 
   return (
     <div className={`app-shell app-shell--${selectedMode}`}>
-      <div className="app-shell__inner">
+      <HoverDock activePage={activePage} onPageChange={setActivePage} />
+      <div className="app-shell__inner control-center__content">
         <header className="app-header">
           <div>
             <p className="app-header__eyebrow">SmartOps</p>
-            <h1>SmartOps Live Console</h1>
+            <h1>SmartOps Control Center</h1>
             <p className="app-header__subtitle">
-              Single-page live dashboard for Monitor - Detect - Diagnose - Decide - Act - Verify
+              Multi-page operations shell for Monitor - Detect - Diagnose - Decide - Act - Verify
               across ERP-simulator and Odoo.
             </p>
           </div>
@@ -661,6 +675,99 @@ function App() {
         ) : null}
 
         <main className="app-main">
+          {activePage === "live" ? (
+            <LiveDashboard
+              loading={loading}
+              refreshing={refreshing}
+              error={error}
+              environment={DASHBOARD_ENV}
+              selectedSystem={selectedSystem}
+              liveSummaryCards={liveSummaryCards}
+              liveSystemState={liveSystemState}
+              pipelineStages={livePipelineStages}
+              getStageToneClass={getStageToneClass}
+              formatDateTime={formatDateTime}
+            />
+          ) : activePage === "demo" ? (
+            <DemoDashboard
+              loading={loading}
+              selectedSystem={selectedSystem}
+              selectedWindowId={selectedWindowId}
+              selectedPp2ScenarioKey={selectedPp2ScenarioKey}
+              latestPolicyDecision={latestPolicyDecision}
+              latestAnomaly={latestAnomaly}
+              latestRca={latestRca}
+              verification={verification}
+              lastAnomalyEvidence={lastAnomalyEvidence}
+              evidencePriorityLabel={evidencePriorityLabel}
+              evidencePriorityScore={evidencePriorityScore}
+              evidencePolicyRank={evidencePolicyRank}
+              evidenceRca={evidenceRca}
+              evidenceAffectedService={evidenceAffectedService}
+              evidencePolicy={evidencePolicy}
+              evidenceAction={evidenceAction}
+              evidenceTarget={evidenceTarget}
+              evidenceVerification={evidenceVerification}
+              evidenceVerificationResult={evidenceVerificationResult}
+              anomalyHistory={anomalyHistory}
+              pipelineStages={pipelineStages}
+              currentScenarioEvidence={currentScenarioEvidence}
+              isOdoo={isOdoo}
+              runningScenario={runningScenario}
+              runningManualAction={runningManualAction}
+              runLiveScenario={runLiveScenario}
+              runManualDevopsAction={runManualDevopsAction}
+              clearScenarioBinding={clearScenarioBinding}
+              refreshDashboard={() => loadDashboardState(false)}
+              formatDateTime={formatDateTime}
+              humanizePolicyLabel={humanizePolicyLabel}
+              humanizeActionLabel={humanizeActionLabel}
+              getStageToneClass={getStageToneClass}
+            />
+          ) : activePage === "policy" ? (
+            <PolicyStudio
+              latestPolicyDecision={latestPolicyDecision}
+              currentScenarioEvidence={currentScenarioEvidence}
+              formatDateTime={formatDateTime}
+              humanizePolicyLabel={humanizePolicyLabel}
+              humanizeActionLabel={humanizeActionLabel}
+            />
+          ) : activePage === "evidence" ? (
+            <EvidenceTimeline
+              anomalies={anomalies}
+              rcas={rcas}
+              latestPolicyDecision={latestPolicyDecision}
+              latestAnomaly={latestAnomaly}
+              latestRca={latestRca}
+              verification={verification}
+              lastAnomalyEvidence={lastAnomalyEvidence}
+              anomalyHistory={anomalyHistory}
+              currentScenarioEvidence={currentScenarioEvidence}
+              selectedWindowId={selectedWindowId}
+              selectedPp2ScenarioKey={selectedPp2ScenarioKey}
+              onReviewIncident={(windowId, scenarioKey = selectedPp2ScenarioKey) => {
+                if (!windowId) return;
+                if (scenarioKey) {
+                  setSelectedPp2ScenarioKey(scenarioKey);
+                }
+                setSelectedWindowId(windowId);
+                setActivePage("demo");
+              }}
+              formatDateTime={formatDateTime}
+              humanizePolicyLabel={humanizePolicyLabel}
+              humanizeActionLabel={humanizeActionLabel}
+            />
+          ) : activePage === "integrations" ? (
+            <Integrations
+              externalLinks={EXTERNAL_LINKS}
+              anomaliesCount={anomalies.length}
+              rcasCount={rcas.length}
+            />
+          ) : (
+            <Settings />
+          )}
+          {false ? (
+            <>
           <section className="panel">
             <div className="section-heading">
               <div>
@@ -1229,6 +1336,8 @@ function App() {
               ))}
             </div>
           </section>
+            </>
+          ) : null}
         </main>
       </div>
     </div>
