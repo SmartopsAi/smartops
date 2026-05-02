@@ -24,3 +24,17 @@ spec:
               value: "8002"
             - name: PYTHONPATH
               value: "/app"
+            - name: POLICY_STORE_PATH
+              value: "/policy_engine/store/policies.json"
+            - name: SMARTOPS_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-admin-secret
+                  key: SMARTOPS_ADMIN_API_KEY
+          volumeMounts:
+            - name: policy-store
+              mountPath: /policy_engine/store
+      volumes:
+        - name: policy-store
+          persistentVolumeClaim:
+            claimName: policy-store-pvc

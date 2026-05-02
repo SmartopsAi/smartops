@@ -24,17 +24,29 @@ spec:
               value: "8002"
             - name: POLICY_ENGINE_AUDIT_PATH
               value: "/policy_engine/audit/policy_decisions.jsonl"
+            - name: POLICY_STORE_PATH
+              value: "/policy_engine/store/policies.json"
+            - name: SMARTOPS_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-admin-secret
+                  key: SMARTOPS_ADMIN_API_KEY
           volumeMounts:
             - name: runtime-data
               mountPath: /apps/policy_engine/data
             - name: policy-audit
               mountPath: /policy_engine/audit
+            - name: policy-store
+              mountPath: /policy_engine/store
       volumes:
         - name: runtime-data
           emptyDir: {}
         - name: policy-audit
           persistentVolumeClaim:
             claimName: policy-audit-pvc
+        - name: policy-store
+          persistentVolumeClaim:
+            claimName: policy-store-pvc
 ---
 apiVersion: v1
 kind: Service
