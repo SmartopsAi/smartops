@@ -10,7 +10,11 @@ from flask import Flask, jsonify, request
 
 from services.artifact_reader import ArtifactReader
 from services.admin_auth import AdminAuthError, get_admin_headers_from_request
-from services.policy_draft_ai import PolicyDraftAIError, generate_policy_draft
+from services.policy_draft_ai import (
+    PolicyDraftAIError,
+    generate_policy_draft,
+    normalize_action_targets,
+)
 from services.smartops_clients import OrchestratorClient
 from services.prometheus_client import PrometheusClient
 from services.dashboard_mapper import (
@@ -1727,7 +1731,16 @@ def api_policy_generate_draft():
             "enabled": False,
         }), exc.status_code
 
-    validation, validation_error = _validate_policy_draft(draft["draft_dsl"])
+    warnings = [
+        "AI-generated policies require human review before saving or deployment.",
+        "This endpoint does not save, enable, reload, deploy, or execute generated policies.",
+    ]
+    draft_dsl, normalization_applied = normalize_action_targets(draft["draft_dsl"])
+    if normalization_applied:
+        warnings.append("AI draft action target was normalized to service to match SmartOps DSL grammar.")
+
+    repair_attempted = False
+    validation, validation_error = _validate_policy_draft(draft_dsl)
     if validation_error:
         message, status_code = validation_error
         return jsonify({
@@ -1736,11 +1749,51 @@ def api_policy_generate_draft():
             "saved": False,
             "deployed": False,
             "enabled": False,
-            "draft_dsl": draft["draft_dsl"],
+            "draft_dsl": draft_dsl,
             "validation": None,
             "unmatched_anomaly": unmatched_anomaly,
             "model": draft["model"],
+            "generation_source": "openai",
+            "repair_attempted": repair_attempted,
+            "normalization_applied": normalization_applied,
         }), status_code
+
+    if not validation.get("valid"):
+        repair_attempted = True
+        try:
+            repaired = generate_policy_draft(
+                unmatched_anomaly,
+                constraints=data.get("constraints") if isinstance(data.get("constraints"), dict) else {},
+                correction={
+                    "draft_dsl": draft_dsl,
+                    "validation": validation,
+                },
+            )
+            repaired_dsl, repaired_normalized = normalize_action_targets(repaired["draft_dsl"])
+            if repaired_normalized:
+                warnings.append("AI draft action target was normalized to service to match SmartOps DSL grammar.")
+            draft_dsl = repaired_dsl
+            normalization_applied = normalization_applied or repaired_normalized
+            validation, validation_error = _validate_policy_draft(draft_dsl)
+            if validation_error:
+                message, status_code = validation_error
+                return jsonify({
+                    "status": "error",
+                    "message": message,
+                    "saved": False,
+                    "deployed": False,
+                    "enabled": False,
+                    "draft_dsl": draft_dsl,
+                    "validation": None,
+                    "unmatched_anomaly": unmatched_anomaly,
+                    "model": repaired["model"],
+                    "generation_source": "openai",
+                    "repair_attempted": repair_attempted,
+                    "normalization_applied": normalization_applied,
+                }), status_code
+            draft["model"] = repaired["model"]
+        except PolicyDraftAIError as exc:
+            warnings.append(f"AI repair retry failed: {exc.message}")
 
     status = "ok" if validation.get("valid") else "validation_failed"
     return jsonify({
@@ -1748,14 +1801,14 @@ def api_policy_generate_draft():
         "saved": False,
         "deployed": False,
         "enabled": False,
-        "draft_dsl": draft["draft_dsl"],
+        "draft_dsl": draft_dsl,
         "validation": validation,
         "unmatched_anomaly": unmatched_anomaly,
         "model": draft["model"],
-        "warnings": [
-            "AI-generated policies require human review before saving or deployment.",
-            "This endpoint does not save, enable, reload, deploy, or execute generated policies.",
-        ],
+        "generation_source": "openai",
+        "repair_attempted": repair_attempted,
+        "normalization_applied": normalization_applied,
+        "warnings": warnings,
     }), 200
 
 

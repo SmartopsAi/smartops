@@ -52,6 +52,16 @@ Allowed actions only:
 - scale(service, N), where N is an integer between 1 and 6
 - restart(service)
 
+Action target syntax is strict:
+- The action target must always be the literal token service.
+- Correct: THEN restart(service)
+- Correct: THEN scale(service, 4)
+- Incorrect: THEN restart(erp-simulator)
+- Incorrect: THEN restart("erp-simulator")
+- Incorrect: THEN restart(smartops-erp-simulator)
+- Incorrect: THEN scale(erp-simulator, 4)
+- Never write deployment names, Kubernetes names, namespace names, or service names inside action parentheses.
+
 Safety constraints:
 - Never generate Kubernetes namespace/deployment direct actions.
 - Never generate delete, patch, exec, shell, database, or credential actions.
@@ -75,6 +85,45 @@ Unmatched anomaly:
 """.strip()
 
 
+def build_policy_repair_prompt(
+    unmatched_anomaly: dict[str, Any],
+    original_dsl: str,
+    validation: dict[str, Any],
+    constraints: dict[str, Any] | None = None,
+) -> str:
+    errors = validation.get("errors") if isinstance(validation, dict) else []
+    return f"""
+Correct this SmartOps policy DSL draft.
+
+Return corrected DSL only. Do not use markdown fences. Do not include explanations.
+
+The action target must always be the literal token service.
+Correct action syntax:
+THEN restart(service)
+THEN scale(service, 4)
+
+Never use deployment names, Kubernetes names, namespace names, quoted strings, or service names inside action parentheses.
+
+Keep the policy conservative and compatible with the current grammar:
+- Conditions use FIELD OP VALUE.
+- Actions are only restart(service) or scale(service, N).
+- Priority is a number between 100 and 250.
+- Scale N must be between 1 and {((constraints or {}).get("max_replicas", 4))}.
+
+Original unmatched anomaly:
+- id: {_display(unmatched_anomaly.get("id"))}
+- anomaly_type: {_display(unmatched_anomaly.get("anomaly_type"))}
+- score: {_display(unmatched_anomaly.get("score"))}
+- rca_cause: {_display(unmatched_anomaly.get("rca_cause"))}
+
+Validation errors:
+{errors}
+
+Original draft:
+{original_dsl}
+""".strip()
+
+
 def extract_dsl_from_model_output(text: str) -> str:
     cleaned = str(text or "").strip()
     fence_match = re.search(r"```(?:[a-zA-Z0-9_-]+)?\s*(.*?)```", cleaned, flags=re.DOTALL)
@@ -86,6 +135,32 @@ def extract_dsl_from_model_output(text: str) -> str:
         cleaned = policy_match.group(1).strip()
 
     return cleaned
+
+
+def normalize_action_targets(dsl: str) -> tuple[str, bool]:
+    normalized = str(dsl or "")
+    changed = False
+
+    def replace_restart(match):
+        nonlocal changed
+        inside = match.group(1).strip()
+        if inside == "service":
+            return match.group(0)
+        changed = True
+        return "restart(service)"
+
+    def replace_scale(match):
+        nonlocal changed
+        inside = match.group(1).strip()
+        replicas = match.group(2).strip()
+        if inside == "service":
+            return match.group(0)
+        changed = True
+        return f"scale(service, {replicas})"
+
+    normalized = re.sub(r"restart\s*\(\s*([^)]+?)\s*\)", replace_restart, normalized)
+    normalized = re.sub(r"scale\s*\(\s*([^,()]+?)\s*,\s*(\d+)\s*\)", replace_scale, normalized)
+    return normalized, changed
 
 
 def _extract_response_text(payload: dict[str, Any]) -> str:
@@ -114,13 +189,22 @@ def _extract_response_text(payload: dict[str, Any]) -> str:
 def generate_policy_draft(
     unmatched_anomaly: dict[str, Any],
     constraints: dict[str, Any] | None = None,
+    correction: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     api_key = os.getenv(OPENAI_API_KEY_ENV, "").strip()
     if not api_key:
         raise PolicyDraftAIError(503, "OPENAI_API_KEY is not configured.")
 
     model = os.getenv(OPENAI_MODEL_ENV, DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
-    prompt = build_policy_prompt(unmatched_anomaly, constraints)
+    if correction:
+        prompt = build_policy_repair_prompt(
+            unmatched_anomaly,
+            correction.get("draft_dsl", ""),
+            correction.get("validation") or {},
+            constraints,
+        )
+    else:
+        prompt = build_policy_prompt(unmatched_anomaly, constraints)
 
     try:
         resp = requests.post(
