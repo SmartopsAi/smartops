@@ -8,11 +8,20 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
+try:
+    import requests
+except Exception:  # pragma: no cover - runtime dependency is provided by the dashboard image.
+    requests = None
+
 SETTINGS_ENV = "NOTIFICATION_SETTINGS_PATH"
 AUDIT_ENV = "NOTIFICATION_AUDIT_PATH"
 DEFAULT_SETTINGS_PATH = "/policy_engine/store/notification_settings.json"
 DEFAULT_AUDIT_PATH = "/policy_engine/store/notification_audit.jsonl"
 FALLBACK_DIR = Path("/tmp/smartops-notifications")
+EMAIL_PROVIDER_ENV = "EMAIL_PROVIDER"
+EMAIL_PROVIDERS = {"smtp", "sendgrid"}
+SENDGRID_API_URL_DEFAULT = "https://api.sendgrid.com/v3/mail/send"
+TWILIO_API_BASE_DEFAULT = "https://api.twilio.com/2010-04-01"
 SMTP_ENV_KEYS = {
     "host": "SMTP_HOST",
     "port": "SMTP_PORT",
@@ -26,6 +35,7 @@ SECRET_KEYS = {
     "secret",
     "api_key",
     "apikey",
+    "sendgrid_api_key",
     "auth_token",
     "smtp_password",
     "smtp_username",
@@ -73,9 +83,61 @@ def _smtp_config() -> dict[str, Any]:
     }
 
 
+def _email_provider() -> str:
+    provider = os.getenv(EMAIL_PROVIDER_ENV, "smtp").strip().lower()
+    if provider not in EMAIL_PROVIDERS:
+        return "smtp"
+    return provider
+
+
+def _sendgrid_config() -> dict[str, str]:
+    values = {
+        "api_key": os.getenv("SENDGRID_API_KEY"),
+        "from_email": os.getenv("SENDGRID_FROM_EMAIL"),
+        "api_url": os.getenv("SENDGRID_API_URL", SENDGRID_API_URL_DEFAULT),
+    }
+    missing = [
+        name
+        for key, name in {"api_key": "SENDGRID_API_KEY", "from_email": "SENDGRID_FROM_EMAIL"}.items()
+        if not values.get(key)
+    ]
+    if missing:
+        raise NotificationServiceError(
+            503,
+            "SendGrid configuration is incomplete. Missing: " + ", ".join(sorted(missing)),
+        )
+    return values
+
+
+def _twilio_config() -> dict[str, str]:
+    values = {
+        "account_sid": os.getenv("TWILIO_ACCOUNT_SID"),
+        "auth_token": os.getenv("TWILIO_AUTH_TOKEN"),
+        "from_whatsapp": os.getenv("TWILIO_WHATSAPP_FROM"),
+        "fallback_to": os.getenv("TWILIO_WHATSAPP_TO"),
+        "api_base": os.getenv("TWILIO_API_BASE", TWILIO_API_BASE_DEFAULT).rstrip("/"),
+    }
+    missing = [
+        name
+        for key, name in {
+            "account_sid": "TWILIO_ACCOUNT_SID",
+            "auth_token": "TWILIO_AUTH_TOKEN",
+            "from_whatsapp": "TWILIO_WHATSAPP_FROM",
+        }.items()
+        if not values.get(key)
+    ]
+    if missing:
+        raise NotificationServiceError(
+            503,
+            "Twilio configuration is incomplete. Missing: " + ", ".join(sorted(missing)),
+        )
+    return values
+
+
 def _redact_error(message: str) -> str:
     redacted = message
-    for env_name in SMTP_ENV_KEYS.values():
+    secret_env_names = list(SMTP_ENV_KEYS.values()) + ["SENDGRID_API_KEY", "TWILIO_AUTH_TOKEN"]
+    for env_name in secret_env_names:
         value = os.getenv(env_name)
         if value:
             redacted = redacted.replace(value, "[redacted]")
@@ -342,6 +404,7 @@ def send_email_real(payload: dict[str, Any], recipients: list[dict[str, Any]], s
     if not email_recipients:
         return {
             "channel": "email",
+            "provider": "smtp",
             "mode": "real",
             "sent": False,
             "recipient_count": 0,
@@ -353,6 +416,7 @@ def send_email_real(payload: dict[str, Any], recipients: list[dict[str, Any]], s
     except NotificationServiceError as exc:
         return {
             "channel": "email",
+            "provider": "smtp",
             "mode": "real",
             "sent": False,
             "recipient_count": len(email_recipients),
@@ -377,6 +441,7 @@ def send_email_real(payload: dict[str, Any], recipients: list[dict[str, Any]], s
     except Exception as exc:
         return {
             "channel": "email",
+            "provider": "smtp",
             "mode": "real",
             "sent": False,
             "recipient_count": len(email_recipients),
@@ -385,6 +450,100 @@ def send_email_real(payload: dict[str, Any], recipients: list[dict[str, Any]], s
 
     return {
         "channel": "email",
+        "provider": "smtp",
+        "mode": "real",
+        "sent": True,
+        "recipient_count": len(email_recipients),
+    }
+
+
+def send_email_sendgrid_real(payload: dict[str, Any], recipients: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
+    del settings
+    preview_recipients = {"recipients": recipients}
+    email_recipients = _email_recipients(preview_recipients)
+    if not email_recipients:
+        return {
+            "channel": "email",
+            "provider": "sendgrid",
+            "mode": "real",
+            "sent": False,
+            "recipient_count": 0,
+            "error": "No enabled email recipients are configured for the email channel.",
+        }
+
+    try:
+        config = _sendgrid_config()
+    except NotificationServiceError as exc:
+        return {
+            "channel": "email",
+            "provider": "sendgrid",
+            "mode": "real",
+            "sent": False,
+            "recipient_count": len(email_recipients),
+            "error": exc.message,
+        }
+
+    if requests is None:
+        return {
+            "channel": "email",
+            "provider": "sendgrid",
+            "mode": "real",
+            "sent": False,
+            "recipient_count": len(email_recipients),
+            "error": "The requests package is unavailable in this runtime.",
+        }
+
+    preview = build_notification_preview(payload)
+    preview["recipients"] = recipients
+    request_body = {
+        "personalizations": [
+            {
+                "to": [{"email": str(recipient["email"])} for recipient in email_recipients],
+                "subject": _email_subject(preview),
+            }
+        ],
+        "from": {"email": str(config["from_email"])},
+        "content": [
+            {
+                "type": "text/plain",
+                "value": _email_body(preview),
+            }
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {config['api_key']}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(str(config["api_url"]), headers=headers, json=request_body, timeout=15)
+    except Exception as exc:
+        return {
+            "channel": "email",
+            "provider": "sendgrid",
+            "mode": "real",
+            "sent": False,
+            "recipient_count": len(email_recipients),
+            "error": _redact_error(str(exc) or exc.__class__.__name__),
+        }
+
+    if not 200 <= int(response.status_code) < 300:
+        response_text = _redact_error((getattr(response, "text", "") or "").strip())
+        safe_error = f"SendGrid returned HTTP {response.status_code}."
+        if response_text:
+            safe_error = f"{safe_error} {response_text[:300]}"
+        return {
+            "channel": "email",
+            "provider": "sendgrid",
+            "mode": "real",
+            "sent": False,
+            "recipient_count": len(email_recipients),
+            "error": safe_error,
+        }
+
+    return {
+        "channel": "email",
+        "provider": "sendgrid",
         "mode": "real",
         "sent": True,
         "recipient_count": len(email_recipients),
@@ -393,6 +552,140 @@ def send_email_real(payload: dict[str, Any], recipients: list[dict[str, Any]], s
 
 def send_whatsapp_mock(preview: dict[str, Any]) -> dict[str, Any]:
     return {"channel": "whatsapp", "mode": "mock", "sent": False, "recipient_count": len(preview["recipients"])}
+
+
+def _normalize_whatsapp_destination(value: str | None) -> str | None:
+    if not value:
+        return None
+    destination = value.strip()
+    if not destination:
+        return None
+    if destination.startswith("whatsapp:"):
+        return destination
+    return f"whatsapp:{destination}"
+
+
+def _whatsapp_recipients(recipients: list[dict[str, Any]], fallback_to: str | None) -> list[str]:
+    destinations = []
+    fallback = _normalize_whatsapp_destination(fallback_to)
+    for recipient in recipients:
+        if not recipient.get("enabled", True):
+            continue
+        if "whatsapp" not in (recipient.get("channels") or []):
+            continue
+        destination = _normalize_whatsapp_destination(recipient.get("whatsapp")) or fallback
+        if destination:
+            destinations.append(destination)
+    return list(dict.fromkeys(destinations))
+
+
+def _whatsapp_body(preview: dict[str, Any]) -> str:
+    if preview.get("alert_type") == "TEST":
+        heading = "SmartOps Test Notification"
+    else:
+        severity = preview.get("severity") or "INFO"
+        title = preview.get("title") or "SmartOps notification"
+        heading = f"[SmartOps] {severity} - {title}"
+
+    parts = [
+        heading,
+        str(preview.get("message") or "SmartOps notification"),
+        f"Alert type: {preview.get('alert_type') or 'UNKNOWN'}",
+        f"Service: {preview.get('service') or 'Not available'}",
+        f"Window ID: {preview.get('window_id') or 'Not available'}",
+        f"Timestamp: {_utc_now()}",
+        "Generated by SmartOps notification routing.",
+    ]
+    return "\n".join(parts)[:1400]
+
+
+def send_whatsapp_twilio_real(payload: dict[str, Any], recipients: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
+    del settings
+    try:
+        config = _twilio_config()
+    except NotificationServiceError as exc:
+        return {
+            "channel": "whatsapp",
+            "provider": "twilio_whatsapp",
+            "mode": "real",
+            "sent": False,
+            "recipient_count": 0,
+            "message_sids": [],
+            "error": exc.message,
+        }
+
+    destinations = _whatsapp_recipients(recipients, config.get("fallback_to"))
+    if not destinations:
+        return {
+            "channel": "whatsapp",
+            "provider": "twilio_whatsapp",
+            "mode": "real",
+            "sent": False,
+            "recipient_count": 0,
+            "message_sids": [],
+            "error": "No enabled WhatsApp recipients are configured for the WhatsApp channel.",
+        }
+
+    if requests is None:
+        return {
+            "channel": "whatsapp",
+            "provider": "twilio_whatsapp",
+            "mode": "real",
+            "sent": False,
+            "recipient_count": len(destinations),
+            "message_sids": [],
+            "error": "The requests package is unavailable in this runtime.",
+        }
+
+    preview = build_notification_preview(payload)
+    preview["recipients"] = recipients
+    url = f"{config['api_base']}/Accounts/{config['account_sid']}/Messages.json"
+    message_sids = []
+    sent_count = 0
+    errors = []
+    for destination in destinations:
+        try:
+            response = requests.post(
+                url,
+                auth=(config["account_sid"], config["auth_token"]),
+                data={
+                    "From": _normalize_whatsapp_destination(config["from_whatsapp"]),
+                    "To": destination,
+                    "Body": _whatsapp_body(preview),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            errors.append(_redact_error(str(exc) or exc.__class__.__name__))
+            continue
+
+        if 200 <= int(response.status_code) < 300:
+            sent_count += 1
+            try:
+                message_sid = (response.json() or {}).get("sid")
+            except Exception:
+                message_sid = None
+            if message_sid:
+                message_sids.append(str(message_sid))
+            continue
+
+        response_text = _redact_error((getattr(response, "text", "") or "").strip())
+        safe_error = f"Twilio returned HTTP {response.status_code}."
+        if response_text:
+            safe_error = f"{safe_error} {response_text[:300]}"
+        errors.append(safe_error)
+
+    result = {
+        "channel": "whatsapp",
+        "provider": "twilio_whatsapp",
+        "mode": "real",
+        "sent": sent_count > 0,
+        "recipient_count": len(destinations),
+        "message_sids": message_sids,
+    }
+    if errors:
+        result["error"] = "; ".join(errors)
+    return result
 
 
 def send_dashboard_mock(preview: dict[str, Any]) -> dict[str, Any]:
@@ -407,16 +700,25 @@ def mock_send_notification(payload: dict[str, Any], updated_by: str) -> dict[str
     preview = build_notification_preview(payload)
     channel_results = []
     real_email_attempted = False
+    real_whatsapp_attempted = False
     for channel in preview["channels"]:
         if channel == "email":
             email_settings = ((settings.get("channels") or {}).get("email") or {})
             if email_settings.get("enabled") is True and email_settings.get("mode") == "real":
                 real_email_attempted = True
-                channel_results.append(send_email_real(payload, preview["recipients"], settings))
+                if _email_provider() == "sendgrid":
+                    channel_results.append(send_email_sendgrid_real(payload, preview["recipients"], settings))
+                else:
+                    channel_results.append(send_email_real(payload, preview["recipients"], settings))
             else:
                 channel_results.append(send_email_mock(preview))
         elif channel == "whatsapp":
-            channel_results.append(send_whatsapp_mock(preview))
+            whatsapp_settings = ((settings.get("channels") or {}).get("whatsapp") or {})
+            if whatsapp_settings.get("enabled") is True and whatsapp_settings.get("mode") == "real":
+                real_whatsapp_attempted = True
+                channel_results.append(send_whatsapp_twilio_real(payload, preview["recipients"], settings))
+            else:
+                channel_results.append(send_whatsapp_mock(preview))
         elif channel == "dashboard":
             channel_results.append(send_dashboard_mock(preview))
         else:
@@ -424,8 +726,16 @@ def mock_send_notification(payload: dict[str, Any], updated_by: str) -> dict[str
 
     failed = any(result.get("error") for result in channel_results)
     sent = any(result.get("sent") is True for result in channel_results)
-    operation = "send_failed" if failed else ("email_send" if real_email_attempted else "mock_send")
-    audit_status = "failed" if failed else ("sent" if real_email_attempted and sent else "mocked")
+    real_provider_attempted = real_email_attempted or real_whatsapp_attempted
+    if failed:
+        operation = "send_failed"
+    elif real_whatsapp_attempted and sent:
+        operation = "whatsapp_send"
+    elif real_email_attempted:
+        operation = "email_send"
+    else:
+        operation = "mock_send"
+    audit_status = "failed" if failed else ("sent" if real_provider_attempted and sent else "mocked")
     audit = append_notification_audit(
         {
             "operation": operation,
@@ -438,11 +748,11 @@ def mock_send_notification(payload: dict[str, Any], updated_by: str) -> dict[str
         }
     )
 
-    mode = "real" if real_email_attempted else "mock"
+    mode = "real" if real_provider_attempted else "mock"
     if failed:
         status = "error"
         response_message = "Notification send failed safely; no secrets were exposed."
-    elif real_email_attempted:
+    elif real_provider_attempted:
         status = "ok"
         response_message = "Notification sent through configured real provider(s)."
     else:
@@ -453,7 +763,7 @@ def mock_send_notification(payload: dict[str, Any], updated_by: str) -> dict[str
         "status": status,
         "mode": mode,
         "sent": sent,
-        "mocked": not real_email_attempted,
+        "mocked": not real_provider_attempted,
         "preview": preview,
         "channel_results": channel_results,
         "audit": audit,
