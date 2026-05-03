@@ -58,6 +58,8 @@ def build_system_state(
     replicas_desired: Optional[int] = None,
     replicas_ready: Optional[int] = None,
     replicas_available: Optional[int] = None,
+    replica_source: Optional[str] = None,
+    metrics_source: Optional[str] = None,
     note: Optional[str] = None,
 ) -> Dict[str, Any]:
     return {
@@ -71,6 +73,8 @@ def build_system_state(
         "replicasDesired": replicas_desired,
         "replicasReady": replicas_ready,
         "replicasAvailable": replicas_available,
+        "replicaSource": replica_source,
+        "metricsSource": metrics_source,
         "note": note,
     }
 
@@ -145,7 +149,10 @@ def build_summary_cards(
         verification_status = verification.get("status")
         overall = verification.get("overall")
 
-        if verification_status == "pending" or overall is None:
+        if verification_status in {"skipped", "not_required"}:
+            anomaly_state_value = "No remediation required"
+            anomaly_state_tone = "neutral"
+        elif verification_status == "pending" or overall is None:
             anomaly_state_value = "Remediation in progress"
             anomaly_state_tone = "warning"
         elif overall is True:
@@ -168,7 +175,13 @@ def build_summary_cards(
         verification_status = verification.get("status")
         overall = verification.get("overall")
 
-        if verification_status == "pending" or overall is None:
+        if verification_status == "skipped":
+            verification_value = "Skipped"
+            verification_tone = "neutral"
+        elif verification_status == "not_required":
+            verification_value = "Not required"
+            verification_tone = "neutral"
+        elif verification_status == "pending" or overall is None:
             verification_value = "Pending"
             verification_tone = "warning"
         elif overall is True:
@@ -256,12 +269,15 @@ def build_pipeline_stages(
     is_odoo = system == "odoo"
 
     latency_value = system_state.get("latencyP95Ms")
+    replica_source = _stringify(system_state.get("replicaSource") or system_state.get("metricsSource"), "not available")
+    monitor_source = "Kubernetes deployment status" if replica_source == "kubernetes" else "Prometheus / service metrics"
     monitor_details = [
         {"label": "System", "value": _stringify(system_state.get("system"))},
         {"label": "Deployment", "value": _stringify(system_state.get("deployment"))},
         {"label": "Namespace", "value": _stringify(system_state.get("namespace"))},
         {"label": "Health", "value": _stringify(system_state.get("health")).title()},
         {"label": "Latency p95 (ms)", "value": _stringify(_safe_round(latency_value, 2))},
+        {"label": "Replica source", "value": replica_source.replace("_", " ").title()},
     ]
 
     if is_odoo:
@@ -508,7 +524,13 @@ def build_pipeline_stages(
         verification_state = verification.get("status")
         overall = verification.get("overall")
 
-        if verification_state == "pending" or overall is None:
+        if verification_state == "skipped":
+            verify_status = "Skipped"
+            verify_summary = "Verification was skipped because no remediation action was executed."
+        elif verification_state == "not_required":
+            verify_status = "Not required"
+            verify_summary = "Verification was not required for this policy decision."
+        elif verification_state == "pending" or overall is None:
             verify_status = "Pending"
             verify_summary = "Verification is pending after action execution."
         elif overall is True:
@@ -520,7 +542,16 @@ def build_pipeline_stages(
 
         verify_details = [
             {"label": "Status", "value": _stringify(verification.get("status"), "unknown").title()},
-            {"label": "Overall", "value": "Passed" if overall is True else "Failed" if overall is False else "Pending"},
+            {
+                "label": "Overall",
+                "value": "Passed"
+                if overall is True
+                else "Failed"
+                if overall is False
+                else "Not required"
+                if verification_state in {"skipped", "not_required"}
+                else "Pending",
+            },
             {"label": "Ready replicas", "value": _stringify(verification.get("ready_replicas"))},
             {"label": "Desired replicas", "value": _stringify(verification.get("desired_replicas"))},
         ]
@@ -533,7 +564,7 @@ def build_pipeline_stages(
             title="Monitor",
             status="Active",
             summary="Metrics flowing from live Kubernetes and Prometheus sources.",
-            evidence_source="Prometheus / service metrics",
+            evidence_source=monitor_source,
             details=monitor_details,
         ),
         _build_stage(
@@ -577,7 +608,7 @@ def build_pipeline_stages(
             title="Verify",
             status=verify_status,
             summary=verify_summary,
-            evidence_source="Verification API",
+            evidence_source=_stringify((verification or {}).get("source"), "Verification API"),
             details=verify_details,
         ),
     ]

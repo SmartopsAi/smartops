@@ -143,6 +143,59 @@ SIMULATOR_DEPLOYMENT = "smartops-erp-simulator"
 DETECTOR_DEPLOYMENT = "smartops-agent-detect-sim"
 BASELINE_REPLICAS = 3
 
+def _deployment_health_from_kubernetes(namespace: str, deployment: str) -> dict | None:
+    status = orchestrator.get_deployment_status(namespace, deployment)
+    if not isinstance(status, dict) or status.get("status") != "ok":
+        return None
+
+    desired = status.get("replicas_desired")
+    ready = status.get("replicas_ready")
+    available = status.get("replicas_available")
+    health = "healthy" if desired is not None and ready is not None and ready >= desired else "degraded"
+
+    return {
+        "namespace": status.get("namespace", namespace),
+        "deployment": status.get("name", deployment),
+        "replicas_desired": desired,
+        "replicas_ready": ready,
+        "replicas_available": available,
+        "replicas_updated": status.get("replicas_updated"),
+        "status": health,
+        "source": "kubernetes",
+        "replica_source": "kubernetes",
+        "metrics_source": "kubernetes",
+    }
+
+
+def _prefer_real_deployment_health(namespace: str, deployment: str, observed: dict) -> dict:
+    observed = dict(observed or {})
+    source = observed.get("source")
+    desired = observed.get("replicas_desired")
+    ready = observed.get("replicas_ready")
+
+    needs_kubernetes_fallback = (
+        source == "dummy_local"
+        or observed.get("replica_source") == "dummy_fallback"
+        or (MODE == "k8s" and (desired in (None, 0) or ready is None))
+    )
+
+    if needs_kubernetes_fallback:
+        kubernetes_health = _deployment_health_from_kubernetes(namespace, deployment)
+        if kubernetes_health:
+            return {
+                **observed,
+                **kubernetes_health,
+                "prometheus_source": source,
+            }
+
+    if observed.get("replica_source") is None:
+        observed["replica_source"] = "prometheus" if source == "kube_state_metrics" else "dummy_fallback"
+    if observed.get("metrics_source") is None:
+        observed["metrics_source"] = "prometheus" if source == "kube_state_metrics" else observed.get("replica_source")
+
+    return observed
+
+
 MANUAL_EXECUTION_STATE = {
     "erp-simulator": {
         "lastActionResult": None,
@@ -331,16 +384,64 @@ def _derive_live_verification_from_state(
     if not system_state or not policy_decision:
         return None
 
-    action_plan = policy_decision.get("action_plan") or {}
-    if not action_plan.get("verify"):
+    decision_value = str(policy_decision.get("decision", "")).lower()
+    guardrail_reason = policy_decision.get("guardrail_reason")
+    if decision_value in {"blocked", "block"}:
+        return {
+            "overall": None,
+            "status": "skipped",
+            "source": "policy_guardrail",
+            "message": guardrail_reason or "No remediation action was executed, so verification was not required.",
+            "ready_replicas": system_state.get("replicasReady"),
+            "desired_replicas": system_state.get("replicasDesired"),
+            "available_replicas": system_state.get("replicasAvailable"),
+        }
+
+    reason = str(policy_decision.get("reason") or "").lower()
+    if decision_value in {"no_action", "none"} and "no policy matched" in reason:
         return None
 
+    if decision_value in {"no_action", "none"}:
+        return {
+            "overall": None,
+            "status": "not_required",
+            "source": "policy_decision",
+            "message": policy_decision.get("reason") or "Policy decision did not require remediation.",
+            "ready_replicas": system_state.get("replicasReady"),
+            "desired_replicas": system_state.get("replicasDesired"),
+            "available_replicas": system_state.get("replicasAvailable"),
+        }
+
+    action_plan = policy_decision.get("action_plan") or {}
     action_type = action_plan.get("type")
+    if action_type == "manual_review":
+        return {
+            "overall": None,
+            "status": "skipped",
+            "source": "policy_manual_review",
+            "message": action_plan.get("reason") or "Policy requires manual operator review; no remediation was executed.",
+            "ready_replicas": system_state.get("replicasReady"),
+            "desired_replicas": system_state.get("replicasDesired"),
+            "available_replicas": system_state.get("replicasAvailable"),
+        }
+
+    if not action_plan.get("verify"):
+        return {
+            "overall": None,
+            "status": "not_required",
+            "source": "policy_action_plan",
+            "message": "Policy action does not request rollout verification.",
+            "ready_replicas": system_state.get("replicasReady"),
+            "desired_replicas": system_state.get("replicasDesired"),
+            "available_replicas": system_state.get("replicasAvailable"),
+        }
+
     scale_plan = action_plan.get("scale") or {}
 
     ready = system_state.get("replicasReady")
     desired = system_state.get("replicasDesired")
     available = system_state.get("replicasAvailable")
+    replica_source = system_state.get("replicaSource") or system_state.get("replica_source")
 
     expected_desired = desired
     if action_type == "scale" and scale_plan.get("replicas") is not None:
@@ -349,20 +450,25 @@ def _derive_live_verification_from_state(
     overall = None
     status = "pending"
 
-    if expected_desired is not None and ready is not None:
-        if ready >= expected_desired:
+    if replica_source == "dummy_fallback":
+        status = "pending"
+        overall = None
+    elif expected_desired is not None and ready is not None:
+        if ready >= expected_desired and (available is None or available >= expected_desired):
             overall = True
             status = "success"
         else:
-            overall = False
+            overall = None
             status = "pending"
 
     return {
         "overall": overall,
         "status": status,
-        "source": "live_state_inference",
+        "source": "live_deployment_state" if replica_source != "dummy_fallback" else "deployment_state_unavailable",
         "message": (
-            f"Deployment state indicates {ready}/{expected_desired} ready replicas."
+            "Real deployment state is unavailable; verification cannot be completed from dummy metrics."
+            if replica_source == "dummy_fallback"
+            else f"Deployment state indicates {ready}/{expected_desired} ready replicas."
             if expected_desired is not None and ready is not None
             else "Live deployment state was used to infer verification."
         ),
@@ -1265,6 +1371,45 @@ def _execute_scenario_3_k8s_native(namespace: str = DEFAULT_NAMESPACE) -> dict:
         },
     }
 
+def _verify_policy_action_plan(policy_event: dict | None) -> dict | None:
+    if not policy_event:
+        return None
+
+    decision = str(policy_event.get("decision") or "").lower()
+    if decision == "blocked":
+        return {
+            "status": "SKIPPED",
+            "source": "policy_guardrail",
+            "message": policy_event.get("guardrail_reason") or "Policy was blocked; no remediation verification required.",
+        }
+
+    action_plan = policy_event.get("action_plan") or {}
+    if not action_plan.get("verify"):
+        return {
+            "status": "NOT_REQUIRED",
+            "source": "policy_action_plan",
+            "message": "Policy action did not request verification.",
+        }
+
+    target = action_plan.get("target") or {}
+    deployment = target.get("name") or SIMULATOR_DEPLOYMENT
+    namespace = target.get("namespace") or DEFAULT_NAMESPACE
+    action_type = action_plan.get("type")
+    expected_replicas = None
+    if action_type == "scale":
+        expected_replicas = (action_plan.get("scale") or {}).get("replicas")
+
+    result = orchestrator.verify_deployment(
+        namespace=namespace,
+        deployment=deployment,
+        expected_replicas=expected_replicas,
+        timeout_seconds=90,
+        poll_interval_seconds=5,
+    )
+    if isinstance(result, dict):
+        result["source"] = "scenario_policy_action_verification"
+    return result
+
 @app.context_processor
 def inject_globals():
     return {"mode": MODE}
@@ -1465,12 +1610,16 @@ def api_run_scenario():
             system=system,
             anomaly_type="error",
         )
+
+    scenario_verification = _verify_policy_action_plan(matched_policy)
+
     return jsonify({
         "status": "ok",
         "scenarioKey": scenario_key,
         "system": system,
         "windowId": window_id,
         "policy": matched_policy,
+        "verification": scenario_verification,
         "reset": execution_result.get("reset"),
         "scenario": execution_result.get("scenario"),
     })
@@ -1829,6 +1978,13 @@ def api_notification_trigger_unmatched_anomaly():
     unmatched_anomaly = data.get("unmatched_anomaly") or {}
     updated_by = str(data.get("source") or "policy-engine")
 
+    if not unmatched_anomaly.get("window_id"):
+        return jsonify({
+            "status": "skipped",
+            "sent": False,
+            "message": "Automatic unmatched anomaly notification skipped because window_id is missing.",
+        }), 200
+
     try:
         result = send_unmatched_anomaly_notification(unmatched_anomaly, updated_by=updated_by)
     except NotificationServiceError as exc:
@@ -2147,9 +2303,21 @@ def api_admin_verify():
 def api_service_metrics():
     namespace = DEFAULT_NAMESPACE
 
-    erp_health = prom.get_deployment_health(namespace, SIMULATOR_DEPLOYMENT)
-    orch_health = prom.get_deployment_health(namespace, "smartops-orchestrator")
-    odoo_health = prom.get_deployment_health(namespace, "odoo-web")
+    erp_health = _prefer_real_deployment_health(
+        namespace,
+        SIMULATOR_DEPLOYMENT,
+        prom.get_deployment_health(namespace, SIMULATOR_DEPLOYMENT),
+    )
+    orch_health = _prefer_real_deployment_health(
+        namespace,
+        "smartops-orchestrator",
+        prom.get_deployment_health(namespace, "smartops-orchestrator"),
+    )
+    odoo_health = _prefer_real_deployment_health(
+        namespace,
+        "odoo-web",
+        prom.get_deployment_health(namespace, "odoo-web"),
+    )
 
     erp_latency_ms = prom.get_latency_p95_ms_progressive({"namespace": namespace})
     odoo_kpis = prom.get_odoo_kpis()
@@ -2253,6 +2421,8 @@ def api_dashboard_state():
             replicas_desired=odoo_metrics.get("replicas_desired"),
             replicas_ready=odoo_metrics.get("replicas_ready"),
             replicas_available=odoo_metrics.get("replicas_available"),
+            replica_source=odoo_metrics.get("replica_source"),
+            metrics_source=odoo_metrics.get("metrics_source"),
             note="This ERP is connected to the SmartOps pipeline, proving pluggable ERP observability.",
         )
     else:
@@ -2281,6 +2451,8 @@ def api_dashboard_state():
             replicas_desired=effective_replicas_desired,
             replicas_ready=effective_replicas_ready,
             replicas_available=effective_replicas_available,
+            replica_source=erp_metrics.get("replica_source"),
+            metrics_source=erp_metrics.get("metrics_source"),
         )
 
     live_scenarios = _build_live_scenarios(
@@ -2328,7 +2500,9 @@ def api_dashboard_state():
         if scenario_context.get("policy") is not None:
             effective_policy = scenario_context.get("policy")
 
-    if bound_context and not manual_verification_result:
+    if manual_verification_result and not using_bound_live_context:
+        verification = _manual_verification_to_summary(manual_verification_result)
+    else:
         inferred_verification = _derive_live_verification_from_state(
             effective_system_state,
             effective_policy,
@@ -2337,38 +2511,6 @@ def api_dashboard_state():
             verification = inferred_verification
         else:
             verification = _latest_verification_placeholder(effective_policy)
-
-    if system == "erp-simulator" and bound_context and effective_policy:
-        action_plan = effective_policy.get("action_plan") or {}
-        action_type = action_plan.get("type")
-        scale_plan = action_plan.get("scale") or {}
-
-        if action_type == "scale" and scale_plan.get("replicas") is not None:
-            target_replicas = scale_plan.get("replicas")
-            effective_system_state["replicasDesired"] = target_replicas
-            effective_system_state["replicasReady"] = target_replicas
-            effective_system_state["replicasAvailable"] = target_replicas
-
-        elif action_type == "restart":
-            current_ready = effective_system_state.get("replicasReady")
-            current_desired = effective_system_state.get("replicasDesired")
-            current_available = effective_system_state.get("replicasAvailable")
-            if current_ready is not None:
-                effective_system_state["replicasReady"] = current_ready
-            if current_desired is not None:
-                effective_system_state["replicasDesired"] = current_desired
-            if current_available is not None:
-                effective_system_state["replicasAvailable"] = current_available
-
-        if not manual_verification_result:
-            inferred_verification = _derive_live_verification_from_state(
-                effective_system_state,
-                effective_policy,
-            )
-            if inferred_verification is not None:
-                verification = inferred_verification
-            else:
-                verification = _latest_verification_placeholder(effective_policy)
 
     summary_cards = build_summary_cards(
         system_state=effective_system_state,

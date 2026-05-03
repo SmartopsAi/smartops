@@ -137,6 +137,8 @@ class PrometheusClient:
                 "replicas_available": available,
                 "status": "healthy" if ready >= desired else "degraded",
                 "source": "dummy_local",
+                "replica_source": "dummy_fallback",
+                "metrics_source": "dummy_fallback",
             }
 
         sel = f'namespace="{namespace}",deployment="{deployment}"'
@@ -163,6 +165,8 @@ class PrometheusClient:
             "replicas_available": avail_i,
             "status": status,
             "source": "kube_state_metrics",
+            "replica_source": "prometheus",
+            "metrics_source": "prometheus",
         }
 
     # -------------------------------
@@ -290,4 +294,3 @@ class PrometheusClient:
                 return int(val * 1000)
 
         return None
-

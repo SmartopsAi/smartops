@@ -32,6 +32,12 @@ spec:
               value: "/policy_engine/audit/notification_settings.json"
             - name: NOTIFICATION_AUDIT_PATH
               value: "/policy_engine/audit/notification_audit.jsonl"
+            - name: DASHBOARD_EVIDENCE_DIR
+              value: "/policy_engine/audit/dashboard-runtime"
+            - name: DASHBOARD_LATEST_EVIDENCE_PATH
+              value: "/policy_engine/audit/dashboard-runtime/latest_anomaly_evidence.json"
+            - name: DASHBOARD_ANOMALY_HISTORY_PATH
+              value: "/policy_engine/audit/dashboard-runtime/anomaly_history.jsonl"
             - name: PROMETHEUS_ENABLED
               value: "false"
             - name: SMARTOPS_ADMIN_API_KEY

@@ -430,6 +430,10 @@ function App() {
           guardrail: latestPolicyDecision?.guardrail_reason,
           decision: latestPolicyDecision?.decision,
           verifyRequested: latestPolicyDecision?.action_plan?.verify,
+          verificationStatus: verification?.status,
+          verificationSource: verification?.source,
+          verifiedReadyReplicas: verification?.ready_replicas ?? systemState?.replicasReady,
+          verifiedDesiredReplicas: verification?.desired_replicas ?? systemState?.replicasDesired,
         }
       : null;
 
@@ -698,6 +702,7 @@ function App() {
               latestAnomaly={latestAnomaly}
               latestRca={latestRca}
               verification={verification}
+              systemState={systemState}
               lastAnomalyEvidence={lastAnomalyEvidence}
               evidencePriorityLabel={evidencePriorityLabel}
               evidencePriorityScore={evidencePriorityScore}

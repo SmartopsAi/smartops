@@ -40,10 +40,14 @@ const getSystemLabel = (selectedSystem) =>
 const getReplicaState = (liveSystemState) => {
   if (!liveSystemState) return "Not available";
 
-  const ready = liveSystemState.ready_replicas ?? liveSystemState.readyReplicas;
+  const ready =
+    liveSystemState.ready_replicas ??
+    liveSystemState.readyReplicas ??
+    liveSystemState.replicasReady;
   const desired =
     liveSystemState.desired_replicas ??
     liveSystemState.desiredReplicas ??
+    liveSystemState.replicasDesired ??
     liveSystemState.replicas;
 
   if (typeof ready !== "undefined" && typeof desired !== "undefined") {
@@ -56,6 +60,11 @@ const getReplicaState = (liveSystemState) => {
 
   return "Not available";
 };
+
+const formatSource = (value) =>
+  String(value || "not available")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 function LiveDashboard({
   loading,
@@ -77,6 +86,7 @@ function LiveDashboard({
   const connected = liveSystemState?.connected === true;
   const connectionLabel = connected ? "Connected" : "Disconnected";
   const refreshLabel = loading ? "Loading" : refreshing ? "Refreshing" : "Ready";
+  const replicaSource = liveSystemState?.replicaSource || liveSystemState?.metricsSource || "not available";
   const hasSummaryData = liveSummaryCards.length > 0;
   const healthCards = SUMMARY_DEFINITIONS.map((definition) => {
     const card = findSummaryCard(liveSummaryCards, definition.aliases);
@@ -114,7 +124,7 @@ function LiveDashboard({
     },
     {
       title: "Kubernetes replica state",
-      value: replicaState,
+      value: `${replicaState} | Source: ${formatSource(replicaSource)}`,
     },
   ];
 
@@ -139,6 +149,7 @@ function LiveDashboard({
             <span>System: {systemLabel}</span>
             <span>Connection: {connectionLabel}</span>
             <span>Refresh: {refreshLabel}</span>
+            <span>Replica source: {formatSource(replicaSource)}</span>
             <span>Mode: Live</span>
           </>
         }
@@ -165,7 +176,7 @@ function LiveDashboard({
             <div className="section-heading__meta">
               <span>{liveSystemState.deployment || systemLabel}</span>
               <span>{liveSystemState.namespace || environment}</span>
-              <span>Live source: current cluster state</span>
+              <span>Replica source: {formatSource(replicaSource)}</span>
             </div>
           ) : null}
         </div>

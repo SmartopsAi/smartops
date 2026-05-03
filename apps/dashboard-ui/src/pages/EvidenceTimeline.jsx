@@ -77,7 +77,7 @@ const buildScenarioIncident = ({ currentScenarioEvidence, selectedPp2ScenarioKey
 
   return {
     id: `scenario-${selectedWindowId}`,
-    source: "Bound scenario evidence",
+    source: "Selected/bound incident reference",
     windowId: selectedWindowId,
     scenarioKey: selectedPp2ScenarioKey,
     timestamp: currentScenarioEvidence.observedAt,
@@ -98,7 +98,7 @@ const buildScenarioIncident = ({ currentScenarioEvidence, selectedPp2ScenarioKey
           ? "Requested"
           : "Not requested"
         : "Not available",
-    result: currentScenarioEvidence.decision === "blocked" ? "Pending / Failed" : "Not available",
+    result: currentScenarioEvidence.decision === "blocked" ? "Guardrail / no execution" : "Use linked dashboard evidence when available",
     guardrail: currentScenarioEvidence.guardrail || "",
     decision: display(currentScenarioEvidence.decision),
     actionDetails: {

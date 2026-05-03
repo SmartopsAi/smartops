@@ -53,6 +53,7 @@ function DemoDashboard({
   latestAnomaly,
   latestRca,
   verification,
+  systemState,
   lastAnomalyEvidence,
   evidencePriorityLabel,
   evidencePriorityScore,
@@ -134,6 +135,20 @@ function DemoDashboard({
   const unmatchedSignal = unmatchedDemoResult?.generated_signal || {};
   const unmatchedDecision = unmatchedDemoResult?.policy_decision || {};
   const unmatchedRecord = unmatchedDemoResult?.unmatched_anomaly || null;
+  const expectedTargetReplicas = currentScenarioEvidence?.targetReplicas ?? latestPolicyDecision?.action_plan?.scale?.replicas;
+  const verifiedReadyReplicas = firstAvailable(
+    currentScenarioEvidence?.verifiedReadyReplicas,
+    verification?.ready_replicas,
+    systemState?.replicasReady,
+    systemState?.readyReplicas
+  );
+  const verifiedDesiredReplicas = firstAvailable(
+    currentScenarioEvidence?.verifiedDesiredReplicas,
+    verification?.desired_replicas,
+    systemState?.replicasDesired,
+    systemState?.desiredReplicas
+  );
+  const verificationSource = currentScenarioEvidence?.verificationSource || verification?.source || systemState?.replicaSource || "Not available";
 
   const handleRunUnmatchedDemo = async () => {
     if (!unmatchedAdminKey.trim()) {
@@ -232,6 +247,22 @@ function DemoDashboard({
                         <span>{latestBoundObservedAt && observedWindowId ? "Last observed window" : "Latest observed window"}</span>
                         <strong>{observedWindowId || "No live window observed yet"}</strong>
                       </div>
+                      {isSelected ? (
+                        <>
+                          <div>
+                            <span>Expected target replicas</span>
+                            <strong>{expectedTargetReplicas ?? "Not applicable"}</strong>
+                          </div>
+                          <div>
+                            <span>Verified live replicas</span>
+                            <strong>
+                              {typeof verifiedReadyReplicas !== "undefined" && typeof verifiedDesiredReplicas !== "undefined"
+                                ? `${verifiedReadyReplicas}/${verifiedDesiredReplicas}`
+                                : "Not available"}
+                            </strong>
+                          </div>
+                        </>
+                      ) : null}
                       {latestBoundObservedAt && observedWindowId ? (
                         <div>
                           <span>Last observed at</span>
@@ -404,6 +435,22 @@ function DemoDashboard({
             <div>
               <span>Verification</span>
               <strong>{resultSummary.verification}</strong>
+            </div>
+            <div>
+              <span>Expected target replicas</span>
+              <strong>{expectedTargetReplicas ?? "Not applicable"}</strong>
+            </div>
+            <div>
+              <span>Real verified replicas</span>
+              <strong>
+                {typeof verifiedReadyReplicas !== "undefined" && typeof verifiedDesiredReplicas !== "undefined"
+                  ? `${verifiedReadyReplicas}/${verifiedDesiredReplicas}`
+                  : "Not available"}
+              </strong>
+            </div>
+            <div>
+              <span>Verification source</span>
+              <strong>{verificationSource}</strong>
             </div>
             <div>
               <span>Guardrail</span>

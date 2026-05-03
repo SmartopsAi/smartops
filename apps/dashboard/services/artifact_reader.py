@@ -65,6 +65,25 @@ class ArtifactReader:
 
         self.runtime_dir = runtime_dir
 
+        dashboard_evidence_dir = os.getenv("DASHBOARD_EVIDENCE_DIR")
+        if dashboard_evidence_dir:
+            dashboard_evidence_dir_path = Path(dashboard_evidence_dir).expanduser()
+        else:
+            dashboard_evidence_dir_path = runtime_dir
+
+        latest_evidence_path = Path(
+            os.getenv(
+                "DASHBOARD_LATEST_EVIDENCE_PATH",
+                str(dashboard_evidence_dir_path / "latest_anomaly_evidence.json"),
+            )
+        ).expanduser()
+        anomaly_history_path = Path(
+            os.getenv(
+                "DASHBOARD_ANOMALY_HISTORY_PATH",
+                str(dashboard_evidence_dir_path / "anomaly_history.jsonl"),
+            )
+        ).expanduser()
+
         # Policy audit log path (optional file-based)
         # In your current deployment you rely on Policy Engine API more than file, so this can stay optional.
         audit_log_env = os.getenv("AUDIT_LOG_PATH")
@@ -78,8 +97,8 @@ class ArtifactReader:
             "features": runtime_dir / "latest_features.json",
             "rca": runtime_dir / "latest_rca.json",
             "audit_log": audit_log_path,
-            "latest_anomaly_evidence": runtime_dir / "latest_anomaly_evidence.json",
-            "anomaly_history": runtime_dir / "anomaly_history.jsonl",
+            "latest_anomaly_evidence": latest_evidence_path,
+            "anomaly_history": anomaly_history_path,
         }
 
         print("--- ARTIFACT READER DEBUG ---")

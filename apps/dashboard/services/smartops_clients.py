@@ -179,6 +179,40 @@ class OrchestratorClient:
             payload
         )
 
+    def get_deployment_status(self, namespace: str, deployment: str) -> Dict[str, Any]:
+        """
+        Read real Kubernetes Deployment status through the Orchestrator.
+
+        Maps to:
+        GET /v1/k8s/deployments?namespace=<namespace>
+        """
+        result = self._get(f"/v1/k8s/deployments?namespace={namespace}")
+        items = result.get("items") if isinstance(result, dict) else None
+        if not isinstance(items, list):
+            return {
+                "status": "error",
+                "message": result.get("message", "Deployment status unavailable") if isinstance(result, dict) else "Deployment status unavailable",
+            }
+
+        for item in items:
+            if item.get("name") == deployment:
+                return {
+                    "status": "ok",
+                    "source": "kubernetes",
+                    "name": item.get("name"),
+                    "namespace": item.get("namespace", namespace),
+                    "replicas_desired": item.get("replicas"),
+                    "replicas_ready": item.get("ready_replicas"),
+                    "replicas_available": item.get("available_replicas"),
+                    "replicas_updated": item.get("updated_replicas"),
+                    "labels": item.get("labels") or {},
+                }
+
+        return {
+            "status": "error",
+            "message": f"Deployment {deployment} not found in namespace {namespace}",
+        }
+
     def get_action_history(self) -> list:
         """
         Fetch action execution history (if exposed by Orchestrator).
