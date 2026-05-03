@@ -75,6 +75,26 @@ spec:
                 secretKeyRef:
                   name: smartops-smtp-secret
                   key: SMTP_USE_TLS
+            - name: TWILIO_ACCOUNT_SID
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-twilio-secret
+                  key: TWILIO_ACCOUNT_SID
+            - name: TWILIO_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-twilio-secret
+                  key: TWILIO_AUTH_TOKEN
+            - name: TWILIO_WHATSAPP_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-twilio-secret
+                  key: TWILIO_WHATSAPP_FROM
+            - name: TWILIO_WHATSAPP_TO
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-twilio-secret
+                  key: TWILIO_WHATSAPP_TO
           resources:
             requests:
               cpu: "100m"
