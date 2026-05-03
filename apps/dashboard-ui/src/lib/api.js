@@ -1,5 +1,30 @@
 const API_BASE_URL = import.meta.env.VITE_SMARTOPS_API_BASE_URL || "";
 
+function extractApiErrorMessage(payload, response) {
+  if (payload?.message) return payload.message;
+  if (typeof payload?.detail === "string") return payload.detail;
+  if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
+    return payload.errors
+      .map((error) => {
+        if (typeof error === "string") return error;
+        const field = error?.field ? `${error.field}: ` : "";
+        return `${field}${error?.message || error?.msg || JSON.stringify(error)}`;
+      })
+      .join("; ");
+  }
+  if (Array.isArray(payload?.validation?.errors) && payload.validation.errors.length > 0) {
+    return payload.validation.errors
+      .map((error) => {
+        if (typeof error === "string") return error;
+        const field = error?.field ? `${error.field}: ` : "";
+        return `${field}${error?.message || error?.msg || JSON.stringify(error)}`;
+      })
+      .join("; ");
+  }
+  if (typeof payload === "string" && payload.trim()) return payload;
+  return `Request failed: ${response.status} ${response.statusText}`;
+}
+
 async function fetchJson(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
@@ -9,11 +34,19 @@ async function fetchJson(path, options = {}) {
     ...options,
   });
 
+  const contentType = response.headers.get("content-type") || "";
+  const payload = contentType.includes("application/json")
+    ? await response.json().catch(() => null)
+    : await response.text().catch(() => "");
+
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+    const error = new Error(extractApiErrorMessage(payload, response));
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
 
-  return response.json();
+  return payload;
 }
 
 function adminHeaders(adminKey) {
@@ -186,10 +219,25 @@ export function updateUnmatchedAnomalyStatus(id, payload, adminKey) {
 }
 
 export function generatePolicyDraft(payload, adminKey) {
+  const unmatchedId =
+    typeof payload === "string"
+      ? payload
+      : payload?.unmatched_anomaly_id;
+
+  if (!unmatchedId) {
+    return Promise.reject(new Error("Select an unmatched anomaly before generating an AI draft."));
+  }
+
   return fetchJson("/api/policies/generate-draft", {
     method: "POST",
     headers: adminHeaders(adminKey),
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      unmatched_anomaly_id: unmatchedId,
+      constraints: {
+        preferred_action: "auto",
+        max_replicas: 4,
+      },
+    }),
   });
 }
 

@@ -61,6 +61,8 @@ const extractDraftName = (draft) => {
   return match?.[1] || "ai_generated_policy_draft";
 };
 
+const getUnmatchedId = (anomaly) => anomaly?.id || "";
+
 function PolicyStudio({
   latestPolicyDecision,
   currentScenarioEvidence,
@@ -116,7 +118,7 @@ function PolicyStudio({
 
   const visibleAudit = useMemo(() => changeAudit.slice(0, 12), [changeAudit]);
   const selectedUnmatchedAnomaly = useMemo(
-    () => unmatchedAnomalies.find((anomaly) => anomaly.id === selectedUnmatchedId) || null,
+    () => unmatchedAnomalies.find((anomaly) => getUnmatchedId(anomaly) === selectedUnmatchedId) || null,
     [selectedUnmatchedId, unmatchedAnomalies]
   );
 
@@ -200,6 +202,10 @@ function PolicyStudio({
   const requireAdmin = () => {
     if (!adminKey.trim()) {
       setActionError("Admin API key is required for this action.");
+      return false;
+    }
+    if (!adminVerified) {
+      setActionError("Verify the Admin API key before running protected policy actions.");
       return false;
     }
     return true;
@@ -348,7 +354,7 @@ function PolicyStudio({
   };
 
   const handleUpdateUnmatchedStatus = async (anomaly, status) => {
-    const id = anomaly?.id;
+    const id = getUnmatchedId(anomaly);
     if (!id) return;
     await runProtectedAction(`Mark ${status}`, async () => {
       await updateUnmatchedAnomalyStatus(
@@ -363,20 +369,38 @@ function PolicyStudio({
     });
   };
 
-  const handleGenerateDraft = async (anomaly) => {
-    if (!requireAdmin()) return;
-    if (!anomaly?.id) {
-      setAiError("Select an unmatched anomaly before generating a draft.");
+  const handleSelectUnmatched = (anomaly) => {
+    const id = getUnmatchedId(anomaly);
+    if (!id) {
+      setAiError("Selected unmatched anomaly is missing an id.");
+      return;
+    }
+    setSelectedUnmatchedId(id);
+    setAiDraft(null);
+    setAiError("");
+    setActionError("");
+  };
+
+  const handleGenerateDraft = async () => {
+    if (!adminKey.trim()) {
+      setAiError("Admin API key is required to generate an AI draft.");
+      return;
+    }
+    if (!adminVerified) {
+      setAiError("Verify the Admin API key before generating an AI draft.");
+      return;
+    }
+    if (!selectedUnmatchedAnomaly?.id) {
+      setAiError("Select an unmatched anomaly before generating an AI draft.");
       return;
     }
     try {
-      setSelectedUnmatchedId(anomaly?.id || "");
       setAiLoading(true);
       setAiError("");
       setActionError("");
       const result = await generatePolicyDraft(
         {
-          unmatched_anomaly_id: anomaly?.id,
+          unmatched_anomaly_id: selectedUnmatchedAnomaly.id,
           constraints: {
             preferred_action: "auto",
             max_replicas: 4,
@@ -562,22 +586,22 @@ function PolicyStudio({
             <button className="action-button" type="button" onClick={() => handleValidate()} disabled={validationLoading}>
               {validationLoading ? "Validating..." : "Validate DSL"}
             </button>
-            <button className="action-button" type="button" onClick={() => handleCreateDraft()} disabled={!adminKey.trim() || Boolean(actionBusy)}>
+            <button className="action-button" type="button" onClick={() => handleCreateDraft()} disabled={!adminVerified || Boolean(actionBusy)}>
               Create Draft
             </button>
-            <button className="action-button" type="button" onClick={handleUpdateSelected} disabled={!adminKey.trim() || !selectedPolicyId || Boolean(actionBusy)}>
+            <button className="action-button" type="button" onClick={handleUpdateSelected} disabled={!adminVerified || !selectedPolicyId || Boolean(actionBusy)}>
               Update Selected
             </button>
-            <button className="action-button action-button--danger" type="button" onClick={handleSoftDelete} disabled={!adminKey.trim() || !selectedPolicyId || Boolean(actionBusy)}>
+            <button className="action-button action-button--danger" type="button" onClick={handleSoftDelete} disabled={!adminVerified || !selectedPolicyId || Boolean(actionBusy)}>
               Soft Delete
             </button>
-            <button className="action-button" type="button" onClick={handleEnable} disabled={!adminKey.trim() || !selectedPolicyId || Boolean(actionBusy)}>
+            <button className="action-button" type="button" onClick={handleEnable} disabled={!adminVerified || !selectedPolicyId || Boolean(actionBusy)}>
               Enable
             </button>
-            <button className="action-button action-button--muted" type="button" onClick={handleDisable} disabled={!adminKey.trim() || !selectedPolicyId || Boolean(actionBusy)}>
+            <button className="action-button action-button--muted" type="button" onClick={handleDisable} disabled={!adminVerified || !selectedPolicyId || Boolean(actionBusy)}>
               Disable
             </button>
-            <button className="action-button" type="button" onClick={handleReload} disabled={!adminKey.trim() || Boolean(actionBusy)}>
+            <button className="action-button" type="button" onClick={handleReload} disabled={!adminVerified || Boolean(actionBusy)}>
               Reload Active Set
             </button>
             <button className="action-button action-button--muted" type="button" onClick={refreshAll} disabled={Boolean(actionBusy)}>
@@ -742,7 +766,12 @@ function PolicyStudio({
           ) : unmatchedAnomalies.length ? (
             <div className="unmatched-anomaly-grid">
               {unmatchedAnomalies.map((anomaly) => (
-                <article key={anomaly.id || anomaly.window_id} className="unmatched-anomaly-card">
+                <article
+                  key={anomaly.id || anomaly.window_id}
+                  className={`unmatched-anomaly-card ${
+                    selectedUnmatchedId === getUnmatchedId(anomaly) ? "unmatched-anomaly-card--selected" : ""
+                  }`}
+                >
                   <div className="policy-list-card__top">
                     <strong>{display(anomaly.id || anomaly.window_id)}</strong>
                     <span className={statusClass(anomaly.status || "new")}>{display(anomaly.status, "new")}</span>
@@ -775,13 +804,13 @@ function PolicyStudio({
                     </div>
                   </div>
                   <div className="policy-action-row policy-action-row--wrap">
-                    <button className="action-button" type="button" onClick={() => handleGenerateDraft(anomaly)} disabled={!adminVerified || aiLoading}>
-                      {selectedUnmatchedId === anomaly.id && aiLoading ? "Generating..." : "Generate AI Draft"}
+                    <button className="action-button" type="button" onClick={() => handleSelectUnmatched(anomaly)}>
+                      {selectedUnmatchedId === getUnmatchedId(anomaly) ? "Selected" : "Select for AI Draft"}
                     </button>
-                    <button className="action-button action-button--muted" type="button" onClick={() => handleUpdateUnmatchedStatus(anomaly, "ignored")} disabled={!adminKey.trim() || Boolean(actionBusy)}>
+                    <button className="action-button action-button--muted" type="button" onClick={() => handleUpdateUnmatchedStatus(anomaly, "ignored")} disabled={!adminVerified || Boolean(actionBusy)}>
                       Mark Ignored
                     </button>
-                    <button className="action-button action-button--muted" type="button" onClick={() => handleUpdateUnmatchedStatus(anomaly, "resolved")} disabled={!adminKey.trim() || Boolean(actionBusy)}>
+                    <button className="action-button action-button--muted" type="button" onClick={() => handleUpdateUnmatchedStatus(anomaly, "resolved")} disabled={!adminVerified || Boolean(actionBusy)}>
                       Mark Resolved
                     </button>
                   </div>
@@ -822,10 +851,16 @@ function PolicyStudio({
               <span>Selected unmatched anomaly</span>
               <strong>
                 {selectedUnmatchedAnomaly
-                  ? `${display(selectedUnmatchedAnomaly.id)} / ${display(selectedUnmatchedAnomaly.service)} / ${display(
-                      selectedUnmatchedAnomaly.anomaly_type
-                    )}`
+                  ? `${display(selectedUnmatchedAnomaly.id)} / window ${display(selectedUnmatchedAnomaly.window_id)}`
                   : "Select an unmatched anomaly from the policy gaps list."}
+              </strong>
+            </div>
+            <div>
+              <span>Selected service / type</span>
+              <strong>
+                {selectedUnmatchedAnomaly
+                  ? `${display(selectedUnmatchedAnomaly.service)} / ${display(selectedUnmatchedAnomaly.anomaly_type)}`
+                  : "Not selected"}
               </strong>
             </div>
           </div>
@@ -835,8 +870,19 @@ function PolicyStudio({
             <div className="ai-draft-panel__content">
               <div className="policy-detail-grid">
                 <div>
+                  <span>Unmatched anomaly</span>
+                  <strong>
+                    {display(aiDraft.unmatched_anomaly?.id || selectedUnmatchedAnomaly?.id)} / window{" "}
+                    {display(aiDraft.unmatched_anomaly?.window_id || selectedUnmatchedAnomaly?.window_id)}
+                  </strong>
+                </div>
+                <div>
                   <span>Generation source</span>
                   <strong>{display(aiDraft.generation_source)}</strong>
+                </div>
+                <div>
+                  <span>Validation result</span>
+                  <strong>{aiDraft.validation?.valid ? "Valid" : "Invalid / needs review"}</strong>
                 </div>
                 <div>
                   <span>Model</span>
@@ -871,13 +917,25 @@ function PolicyStudio({
               </div>
             </div>
           ) : (
-            <EmptyState title="No AI draft generated">
-              {currentScenarioEvidence
-                ? `Current evidence: ${currentScenarioEvidence.anomalyType || "Unknown"} anomaly on ${
-                    currentScenarioEvidence.service || "unknown service"
-                  }. Select an unmatched anomaly above to generate DSL from the backend AI endpoint.`
-                : "Select an unmatched anomaly above, verify the admin key, then click Generate AI Draft. The draft will appear here for review."}
-            </EmptyState>
+            <>
+              <div className="policy-action-row policy-action-row--wrap">
+                <button
+                  className="action-button action-button--primary"
+                  type="button"
+                  onClick={handleGenerateDraft}
+                  disabled={!adminVerified || !selectedUnmatchedAnomaly || aiLoading}
+                >
+                  {aiLoading ? "Generating..." : "Generate AI Draft"}
+                </button>
+              </div>
+              <EmptyState title="No AI draft generated">
+                {currentScenarioEvidence
+                  ? `Current evidence: ${currentScenarioEvidence.anomalyType || "Unknown"} anomaly on ${
+                      currentScenarioEvidence.service || "unknown service"
+                    }. Select an unmatched anomaly above to generate DSL from the backend AI endpoint.`
+                  : "Select an unmatched anomaly above, verify the admin key, then click Generate AI Draft. The draft will appear here for review."}
+              </EmptyState>
+            </>
           )}
         </section>
       </section>
