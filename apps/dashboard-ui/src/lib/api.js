@@ -77,6 +77,14 @@ export function runScenario(payload) {
   });
 }
 
+export function runUnmatchedAnomalyDemo(adminKey) {
+  return fetchJson("/api/demo/unmatched-anomaly/run", {
+    method: "POST",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify({}),
+  });
+}
+
 export function triggerAction(payload) {
   return fetchJson("/api/actions/trigger", {
     method: "POST",

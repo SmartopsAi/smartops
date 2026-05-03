@@ -1475,6 +1475,101 @@ def api_run_scenario():
         "scenario": execution_result.get("scenario"),
     })
 
+
+@app.route("/api/demo/unmatched-anomaly/run", methods=["POST"])
+def api_demo_unmatched_anomaly_run():
+    try:
+        get_admin_headers_from_request(request)
+    except AdminAuthError as exc:
+        return _admin_auth_error_response(exc)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    window_id = f"DEMO-UNMATCHED-{stamp}"
+    anomaly_type = f"network_latency_demo_{stamp}"
+    signal = {
+        "windowId": window_id,
+        "service": "erp-simulator",
+        "anomaly": {
+            "type": anomaly_type,
+            "score": 0.97,
+        },
+        "rca": {
+            "cause": "External Dependency Timeout",
+            "probability": 0.93,
+        },
+        "metadata": {
+            "risk": "HIGH",
+            "source": "dashboard-demo",
+            "profile": "unmatched-policy-gap",
+        },
+        "k8s": {
+            "replicas": {
+                "current": BASELINE_REPLICAS,
+            },
+        },
+        "raw": {
+            "detection": {
+                "anomaly": True,
+            },
+            "source": "dashboard-demo",
+        },
+    }
+
+    try:
+        evaluate_resp = requests.post(
+            f"{POLICY_ENGINE_URL}/v1/policy/evaluate",
+            json={
+                "service": "erp-simulator",
+                "signal": signal,
+            },
+            timeout=8,
+        )
+        try:
+            decision = evaluate_resp.json()
+        except Exception:
+            decision = {
+                "status": "error",
+                "message": "Policy Engine returned a non-JSON response.",
+            }
+
+        if not evaluate_resp.ok:
+            return jsonify({
+                "status": "error",
+                "message": "Policy Engine evaluation failed.",
+                "policy_engine_status": evaluate_resp.status_code,
+                "policy_decision": decision,
+            }), 502
+    except Exception:
+        return jsonify({
+            "status": "error",
+            "message": "Policy Engine unavailable.",
+        }), 502
+
+    unmatched_record = None
+    try:
+        unmatched_resp = requests.get(
+            f"{POLICY_ENGINE_URL}/v1/policies/unmatched-anomalies",
+            params={"limit": 50},
+            timeout=5,
+        )
+        unmatched_resp.raise_for_status()
+        unmatched_payload = unmatched_resp.json()
+        for item in unmatched_payload.get("items", []):
+            if item.get("window_id") == window_id:
+                unmatched_record = item
+                break
+    except Exception:
+        unmatched_record = None
+
+    return jsonify({
+        "status": "ok",
+        "generated_signal": signal,
+        "policy_decision": decision,
+        "unmatched_anomaly": unmatched_record,
+        "expected_effect": "unmatched anomaly should be recorded and notification should be sent",
+    })
+
+
 @app.route("/api/anomalies")
 def api_anomalies():
     anomaly = reader.get_latest_anomaly()

@@ -1,5 +1,7 @@
+import { useState } from "react";
 import LoadingPulse from "../components/LoadingPulse";
 import PageHeader from "../components/PageHeader";
+import { runUnmatchedAnomalyDemo } from "../lib/api";
 
 const SCENARIOS = [
   {
@@ -77,6 +79,11 @@ function DemoDashboard({
   humanizeActionLabel,
   getStageToneClass,
 }) {
+  const [unmatchedAdminKey, setUnmatchedAdminKey] = useState("");
+  const [runningUnmatchedDemo, setRunningUnmatchedDemo] = useState(false);
+  const [unmatchedDemoResult, setUnmatchedDemoResult] = useState(null);
+  const [unmatchedDemoError, setUnmatchedDemoError] = useState("");
+
   const selectedScenarioLabel = selectedPp2ScenarioKey || "None";
   const systemLabel = selectedSystem === "odoo" ? "Odoo" : "ERP-simulator";
   const latestBoundWindowId = firstAvailable(
@@ -123,6 +130,28 @@ function DemoDashboard({
       latestPolicyDecision?.guardrail_reason ||
       evidencePolicy.guardrail ||
       "",
+  };
+  const unmatchedSignal = unmatchedDemoResult?.generated_signal || {};
+  const unmatchedDecision = unmatchedDemoResult?.policy_decision || {};
+  const unmatchedRecord = unmatchedDemoResult?.unmatched_anomaly || null;
+
+  const handleRunUnmatchedDemo = async () => {
+    if (!unmatchedAdminKey.trim()) {
+      setUnmatchedDemoError("Admin API key is required to run the unmatched anomaly demo.");
+      return;
+    }
+
+    try {
+      setRunningUnmatchedDemo(true);
+      setUnmatchedDemoError("");
+      const result = await runUnmatchedAnomalyDemo(unmatchedAdminKey.trim());
+      setUnmatchedDemoResult(result);
+      await refreshDashboard?.();
+    } catch (err) {
+      setUnmatchedDemoError(err.message || "Unmatched anomaly demo failed.");
+    } finally {
+      setRunningUnmatchedDemo(false);
+    }
   };
 
   return (
@@ -244,6 +273,98 @@ function DemoDashboard({
             ) : null}
           </>
         )}
+      </section>
+
+      <section className="panel demo-section demo-unmatched-section">
+        <div className="section-heading">
+          <div>
+            <p className="section-heading__eyebrow">Scenario 4</p>
+            <h2>Unmatched anomaly / policy gap</h2>
+          </div>
+          <div className="section-heading__meta">
+            <span>Admin protected</span>
+            <span>Policy Engine evaluation only</span>
+          </div>
+        </div>
+
+        <article className="demo-unmatched-card">
+          <div>
+            <span className="badge badge--stage stage-warning">POLICY GAP</span>
+            <h3>Scenario 4 - Unmatched anomaly / policy gap</h3>
+            <p>
+              Triggers an unknown anomaly type that intentionally has no matching policy. SmartOps records it as
+              an unmatched anomaly and sends automatic notifications for a newly created record.
+            </p>
+          </div>
+
+          <div className="demo-admin-inline">
+            <label>
+              <span>Admin API Key</span>
+              <input
+                type="password"
+                value={unmatchedAdminKey}
+                onChange={(event) => setUnmatchedAdminKey(event.target.value)}
+                placeholder="Enter admin key for this run"
+                autoComplete="off"
+              />
+            </label>
+            <button
+              className="action-button action-button--primary"
+              type="button"
+              onClick={handleRunUnmatchedDemo}
+              disabled={runningUnmatchedDemo || !unmatchedAdminKey.trim()}
+            >
+              {runningUnmatchedDemo ? "Running unmatched demo..." : "Run Unmatched Anomaly Demo"}
+            </button>
+          </div>
+
+          {unmatchedDemoError ? <p className="demo-error-text">{unmatchedDemoError}</p> : null}
+
+          {unmatchedDemoResult ? (
+            <div className="demo-unmatched-result">
+              <div>
+                <span>Decision</span>
+                <strong>{unmatchedDecision.decision || "Not available"}</strong>
+              </div>
+              <div>
+                <span>Reason</span>
+                <strong>{unmatchedDecision.reason || "No policy matched"}</strong>
+              </div>
+              <div>
+                <span>Generated test window</span>
+                <strong>{unmatchedSignal.windowId || "Not available"}</strong>
+              </div>
+              <div>
+                <span>Anomaly type</span>
+                <strong>{unmatchedSignal.anomaly?.type || "Not available"}</strong>
+              </div>
+              <div>
+                <span>Risk / score</span>
+                <strong>
+                  {unmatchedSignal.metadata?.risk || "Not available"} / {unmatchedSignal.anomaly?.score ?? "Not available"}
+                </strong>
+              </div>
+              <div>
+                <span>RCA cause</span>
+                <strong>
+                  {unmatchedSignal.rca?.cause || "Not available"} / {unmatchedSignal.rca?.probability ?? "Not available"}
+                </strong>
+              </div>
+              <div>
+                <span>Unmatched anomaly ID</span>
+                <strong>{unmatchedRecord?.id || "Pending in policy store"}</strong>
+              </div>
+              <div>
+                <span>Expected effect</span>
+                <strong>{unmatchedDemoResult.expected_effect || "Unmatched record and notification trigger expected"}</strong>
+              </div>
+            </div>
+          ) : null}
+
+          <p className="demo-next-step">
+            Next step: Open Policy Studio - Unmatched Anomalies - Select this anomaly - Generate AI Draft.
+          </p>
+        </article>
       </section>
 
       <section className="demo-lab__split">
