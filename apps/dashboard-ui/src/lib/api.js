@@ -185,4 +185,37 @@ export function generatePolicyDraft(payload, adminKey) {
   });
 }
 
+export function getNotificationSettings() {
+  return fetchJson("/api/notifications/settings");
+}
+
+export function saveNotificationSettings(payload, adminKey) {
+  return fetchJson("/api/notifications/settings", {
+    method: "POST",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getNotificationAudit(limit) {
+  const suffix = limit ? `?limit=${encodeURIComponent(limit)}` : "";
+  return fetchJson(`/api/notifications/audit${suffix}`);
+}
+
+export function sendTestNotification(payload, adminKey) {
+  return fetchJson("/api/notifications/test", {
+    method: "POST",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function sendNotification(payload, adminKey) {
+  return fetchJson("/api/notifications/send", {
+    method: "POST",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
 export { API_BASE_URL };
