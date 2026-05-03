@@ -16,6 +16,7 @@ DSL_GRAMMAR = r"""
 
     action: "restart" "(" "service" ")"          -> restart
           | "scale" "(" "service" "," NUMBER ")" -> scale
+          | "manual_review" "(" "service" ")"    -> manual_review
 
     %import common.ESCAPED_STRING
     %import common.NUMBER

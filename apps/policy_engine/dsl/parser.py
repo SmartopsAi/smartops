@@ -37,6 +37,9 @@ class _DSLTransformer(Transformer):
         replicas = int(float(items[0]))
         return Action(type="scale", replicas=replicas)
 
+    def manual_review(self, _):
+        return Action(type="manual_review")
+
     def policy(self, items):
         # items[0] is ESCAPED_STRING token. Convert to str then strip quotes.
         name = _strip_quotes(str(items[0]))

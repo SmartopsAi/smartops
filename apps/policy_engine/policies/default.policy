@@ -13,6 +13,13 @@ POLICY "scale_up_on_anomaly_resource_step_2":
   THEN scale(service, 6)
   PRIORITY 205
 
+POLICY "max_capacity_resource_manual_review":
+  WHEN anomaly.type == "resource"
+       AND anomaly.score >= 0.9
+       AND k8s.replicas.current >= 6
+  THEN manual_review(service)
+  PRIORITY 204
+
 POLICY "restart_on_anomaly_error":
   WHEN anomaly.type == "error"
        AND anomaly.score >= 0.9

@@ -12,6 +12,9 @@ def apply_guardrails(action_plan: dict) -> tuple[bool, str]:
     """
     a_type = action_plan.get("type")
 
+    if a_type == "manual_review":
+        return False, action_plan.get("reason") or "manual review required"
+
     if a_type == "scale":
         replicas = action_plan.get("scale", {}).get("replicas")
         if replicas is None:

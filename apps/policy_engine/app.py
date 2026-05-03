@@ -89,6 +89,15 @@ def _resolve_target(signal: dict) -> dict:
 def _build_action_plan(chosen, signal: dict) -> dict:
     target = _resolve_target(signal)
 
+    if chosen.action.type == "manual_review":
+        return {
+            "type": "manual_review",
+            "dry_run": True,
+            "verify": False,
+            "target": target,
+            "reason": "max safe replica capacity reached; operator review required",
+        }
+
     if chosen.action.type == "restart":
         return {
             "type": "restart",
@@ -103,6 +112,43 @@ def _build_action_plan(chosen, signal: dict) -> dict:
         "verify": True,
         "target": target,
         "scale": {"replicas": chosen.action.replicas},
+    }
+
+
+def _get_nested(data: dict, path: str, default=None):
+    cur = data
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return default
+        cur = cur.get(part)
+    return cur
+
+
+def _resource_at_max_capacity(signal: dict) -> bool:
+    try:
+        anomaly_type = _get_nested(signal, "anomaly.type")
+        anomaly_score = float(_get_nested(signal, "anomaly.score", 0.0) or 0.0)
+        current_replicas = int(float(_get_nested(signal, "k8s.replicas.current", 0) or 0))
+    except Exception:
+        return False
+
+    return anomaly_type == "resource" and anomaly_score >= 0.9 and current_replicas >= 6
+
+
+def _max_capacity_decision(signal: dict) -> dict:
+    priority_result = calculate_priority(signal, {"type": "manual_review"})
+    return {
+        "ts_utc": _utc_now(),
+        "decision": "blocked",
+        "policy": "max_capacity_resource_manual_review",
+        "priority": 204,
+        "priority_label": priority_result["priority_label"],
+        "priority_score": priority_result["priority_score"],
+        "execution_mode": "MANUAL_REVIEW",
+        "priority_explanation": "Resource anomaly remains active at the max safe replica capacity.",
+        "priority_factors": priority_result["factors"],
+        "guardrail_reason": "max safe replica capacity reached; operator review required",
+        "action_plan": None,
     }
 
 
@@ -204,6 +250,11 @@ def _evaluate_once(payload: dict | None = None) -> dict:
     chosen = evaluate_policies(policies, signal)
 
     if not chosen:
+        if _resource_at_max_capacity(signal):
+            decision = _max_capacity_decision(signal)
+            _audit(decision)
+            return decision
+
         decision = {"ts_utc": _utc_now(), "decision": "no_action", "reason": "no policy matched"}
         try:
             unmatched_result = record_unmatched_anomaly(signal, reason="no policy matched")

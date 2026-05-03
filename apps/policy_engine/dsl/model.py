@@ -9,7 +9,7 @@ class Condition:
 
 @dataclass
 class Action:
-    type: str  # "restart" | "scale"
+    type: str  # "restart" | "scale" | "manual_review"
     replicas: int | None = None
 
 @dataclass

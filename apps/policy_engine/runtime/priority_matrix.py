@@ -16,6 +16,7 @@ SERVICE_CRITICALITY = {
 ACTION_RISK = {
     "restart": 2,
     "scale": 1,
+    "manual_review": 0,
     "rollback": 3,
     "patch": 3,
     "observe": 0,

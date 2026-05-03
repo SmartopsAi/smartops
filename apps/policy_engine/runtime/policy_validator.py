@@ -4,7 +4,7 @@ from typing import Any
 
 from apps.policy_engine.dsl.parser import parse_policies
 
-ALLOWED_ACTIONS = {"scale", "restart"}
+ALLOWED_ACTIONS = {"scale", "restart", "manual_review"}
 ALLOWED_NAMESPACES = {"smartops-dev"}
 ALLOWED_DEPLOYMENTS = {"smartops-erp-simulator", "odoo-web"}
 ALLOWED_SERVICES = {"erp-simulator", "odoo", *ALLOWED_DEPLOYMENTS}
@@ -155,7 +155,7 @@ def validate_policy_dsl(dsl: Any, mode: str = "draft") -> dict[str, Any]:
             warnings.append(
                 _error(
                     f"{field_prefix}.action.verify",
-                    "Current DSL does not express verify=true/false; runtime action plans currently set verify=true.",
+                    "Current DSL does not express verify=true/false; runtime action plans set safe defaults.",
                 )
             )
 
@@ -164,6 +164,8 @@ def validate_policy_dsl(dsl: Any, mode: str = "draft") -> dict[str, Any]:
             guardrails.append(f"replica bounds {MIN_REPLICAS}-{MAX_REPLICAS}")
         if action.type == "restart":
             guardrails.append("runtime restart cooldown guardrail")
+        if action.type == "manual_review":
+            guardrails.append("manual review blocks automatic remediation")
 
         if not guardrails:
             guardrails_present = False
