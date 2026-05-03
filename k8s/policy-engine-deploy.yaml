@@ -26,6 +26,8 @@ spec:
               value: "/app"
             - name: POLICY_STORE_PATH
               value: "/policy_engine/store/policies.json"
+            - name: DASHBOARD_API_URL
+              value: "http://smartops-dashboard-api:5050"
             - name: SMARTOPS_ADMIN_API_KEY
               valueFrom:
                 secretKeyRef:

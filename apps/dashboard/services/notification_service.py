@@ -769,3 +769,97 @@ def mock_send_notification(payload: dict[str, Any], updated_by: str) -> dict[str
         "audit": audit,
         "message": response_message,
     }
+
+
+def _recipient_matches_channel(recipient: dict[str, Any], channel: str) -> bool:
+    if not recipient.get("enabled", True):
+        return False
+    if channel not in (recipient.get("channels") or []):
+        return False
+    if channel == "email":
+        return bool(recipient.get("email"))
+    if channel == "whatsapp":
+        return bool(recipient.get("whatsapp") or os.getenv("TWILIO_WHATSAPP_TO"))
+    return True
+
+
+def send_unmatched_anomaly_notification(
+    unmatched_anomaly: dict[str, Any],
+    updated_by: str = "policy-engine",
+) -> dict[str, Any]:
+    if not isinstance(unmatched_anomaly, dict):
+        raise NotificationServiceError(400, "unmatched_anomaly must be a JSON object.")
+
+    settings = get_notification_settings()
+    rules = settings.get("rules") or {}
+    if rules.get("unmatched_anomaly") is False:
+        audit = append_notification_audit(
+            {
+                "operation": "auto_trigger_skipped",
+                "updated_by": updated_by,
+                "channels": [],
+                "recipient_count": 0,
+                "alert_type": "UNMATCHED_ANOMALY",
+                "status": "skipped",
+                "message": "Automatic unmatched anomaly notification skipped because rule is disabled.",
+            }
+        )
+        return {
+            "status": "skipped",
+            "sent": False,
+            "mocked": False,
+            "audit": audit,
+            "message": "Notification rule unmatched_anomaly is disabled.",
+        }
+
+    channels_config = settings.get("channels") or {}
+    recipients = [recipient for recipient in (settings.get("recipients") or []) if recipient.get("enabled", True)]
+    enabled_channels = [
+        channel
+        for channel, config in channels_config.items()
+        if isinstance(config, dict) and config.get("enabled") is True
+    ]
+    eligible_channels = [
+        channel
+        for channel in enabled_channels
+        if any(_recipient_matches_channel(recipient, channel) for recipient in recipients)
+    ]
+
+    if not eligible_channels:
+        audit = append_notification_audit(
+            {
+                "operation": "auto_trigger_skipped",
+                "updated_by": updated_by,
+                "channels": enabled_channels,
+                "recipient_count": len(recipients),
+                "alert_type": "UNMATCHED_ANOMALY",
+                "status": "skipped",
+                "message": "Automatic unmatched anomaly notification skipped because no eligible channels or recipients were configured.",
+            }
+        )
+        return {
+            "status": "skipped",
+            "sent": False,
+            "mocked": False,
+            "audit": audit,
+            "message": "No eligible channels or recipients are configured.",
+        }
+
+    anomaly_type = unmatched_anomaly.get("anomaly_type") or "unknown anomaly"
+    service = unmatched_anomaly.get("service") or "unknown service"
+    rca_cause = unmatched_anomaly.get("rca_cause") or "unknown"
+    window_id = unmatched_anomaly.get("window_id") or "unknown"
+
+    return mock_send_notification(
+        {
+            "alert_type": "UNMATCHED_ANOMALY",
+            "severity": unmatched_anomaly.get("risk") or "HIGH",
+            "title": "Unmatched anomaly detected",
+            "message": f"No policy matched {anomaly_type} for {service}. RCA: {rca_cause}. Window: {window_id}.",
+            "service": service,
+            "window_id": window_id,
+            "channels": eligible_channels,
+            "updated_by": updated_by,
+        },
+        updated_by=updated_by,
+    )

@@ -27,6 +27,7 @@ from apps.policy_engine.repository.unmatched_anomaly_store import (
     record_unmatched_anomaly,
     update_unmatched_status,
 )
+from apps.policy_engine.services.notification_client import notify_unmatched_anomaly
 from apps.policy_engine.runtime.adapter import load_runtime_signals
 from apps.policy_engine.runtime.evaluator import evaluate_policies
 from apps.policy_engine.runtime.guardrails import apply_guardrails
@@ -205,7 +206,9 @@ def _evaluate_once(payload: dict | None = None) -> dict:
     if not chosen:
         decision = {"ts_utc": _utc_now(), "decision": "no_action", "reason": "no policy matched"}
         try:
-            record_unmatched_anomaly(signal, reason="no policy matched")
+            unmatched_result = record_unmatched_anomaly(signal, reason="no policy matched")
+            if unmatched_result and unmatched_result.get("created_new") is True:
+                notify_unmatched_anomaly(unmatched_result.get("record") or {}, reason="no policy matched")
         except Exception:
             pass
         _audit(decision)

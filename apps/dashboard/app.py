@@ -21,6 +21,7 @@ from services.notification_service import (
     list_notification_audit,
     mock_send_notification,
     save_notification_settings,
+    send_unmatched_anomaly_notification,
 )
 from services.smartops_clients import OrchestratorClient
 from services.prometheus_client import PrometheusClient
@@ -1720,6 +1721,33 @@ def api_notification_send():
         return _notification_error_response(exc)
 
     return jsonify(result)
+
+
+@app.route("/api/notifications/triggers/unmatched-anomaly", methods=["POST"])
+def api_notification_trigger_unmatched_anomaly():
+    try:
+        get_admin_headers_from_request(request)
+    except AdminAuthError as exc:
+        return _admin_auth_error_response(exc)
+
+    data = request.get_json(silent=True) or {}
+    unmatched_anomaly = data.get("unmatched_anomaly") or {}
+    updated_by = str(data.get("source") or "policy-engine")
+
+    try:
+        result = send_unmatched_anomaly_notification(unmatched_anomaly, updated_by=updated_by)
+    except NotificationServiceError as exc:
+        return _notification_error_response(exc)
+    except Exception:
+        return jsonify({
+            "status": "error",
+            "sent": False,
+            "message": "Automatic unmatched anomaly notification failed safely.",
+        }), 200
+
+    status = result.get("status", "ok")
+    http_status = 200 if status in {"ok", "skipped"} else 200
+    return jsonify(result), http_status
 
 
 def _get_unmatched_anomaly_by_id(unmatched_id: str):

@@ -28,6 +28,10 @@ spec:
               value: "http://smartops-policy-engine:5051"
             - name: POLICY_ENGINE_AUDIT_PATH
               value: "/policy_engine/audit/policy_decisions.jsonl"
+            - name: NOTIFICATION_SETTINGS_PATH
+              value: "/policy_engine/audit/notification_settings.json"
+            - name: NOTIFICATION_AUDIT_PATH
+              value: "/policy_engine/audit/notification_audit.jsonl"
             - name: PROMETHEUS_ENABLED
               value: "false"
             - name: SMARTOPS_ADMIN_API_KEY

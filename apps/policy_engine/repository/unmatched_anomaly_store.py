@@ -127,7 +127,12 @@ def record_unmatched_anomaly(signal: dict[str, Any], reason: str = "no policy ma
                 record["count"] = int(record.get("count") or 0) + 1
                 record["source_decision"] = reason
                 _write_records_atomic(records)
-                return record
+                return {
+                    "created_new": False,
+                    "record": record,
+                    "signal_hash": signal_hash,
+                    "count": record["count"],
+                }
 
         parts = _signal_fingerprint_parts(signal)
         metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
@@ -155,7 +160,12 @@ def record_unmatched_anomaly(signal: dict[str, Any], reason: str = "no policy ma
 
         records.append(record)
         _write_records_atomic(records)
-        return record
+        return {
+            "created_new": True,
+            "record": record,
+            "signal_hash": signal_hash,
+            "count": 1,
+        }
     except Exception:
         return None
 
