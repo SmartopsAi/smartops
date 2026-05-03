@@ -115,6 +115,10 @@ function PolicyStudio({
   );
 
   const visibleAudit = useMemo(() => changeAudit.slice(0, 12), [changeAudit]);
+  const selectedUnmatchedAnomaly = useMemo(
+    () => unmatchedAnomalies.find((anomaly) => anomaly.id === selectedUnmatchedId) || null,
+    [selectedUnmatchedId, unmatchedAnomalies]
+  );
 
   const selectPolicy = useCallback((policy) => {
     const id = getPolicyId(policy);
@@ -361,6 +365,10 @@ function PolicyStudio({
 
   const handleGenerateDraft = async (anomaly) => {
     if (!requireAdmin()) return;
+    if (!anomaly?.id) {
+      setAiError("Select an unmatched anomaly before generating a draft.");
+      return;
+    }
     try {
       setSelectedUnmatchedId(anomaly?.id || "");
       setAiLoading(true);
@@ -767,7 +775,7 @@ function PolicyStudio({
                     </div>
                   </div>
                   <div className="policy-action-row policy-action-row--wrap">
-                    <button className="action-button" type="button" onClick={() => handleGenerateDraft(anomaly)} disabled={!adminKey.trim() || aiLoading}>
+                    <button className="action-button" type="button" onClick={() => handleGenerateDraft(anomaly)} disabled={!adminVerified || aiLoading}>
                       {selectedUnmatchedId === anomaly.id && aiLoading ? "Generating..." : "Generate AI Draft"}
                     </button>
                     <button className="action-button action-button--muted" type="button" onClick={() => handleUpdateUnmatchedStatus(anomaly, "ignored")} disabled={!adminKey.trim() || Boolean(actionBusy)}>
@@ -790,14 +798,36 @@ function PolicyStudio({
         <section className="panel policy-section ai-draft-panel">
           <div className="section-heading">
             <div>
-              <p className="section-heading__eyebrow">AI Draft</p>
-              <h2>Human-reviewed policy draft</h2>
+              <p className="section-heading__eyebrow">AI Policy Draft Assistant</p>
+              <h2>Generate draft DSL from unmatched anomalies</h2>
             </div>
             {aiDraft ? (
               <span className={aiDraft.validation?.valid ? "policy-badge policy-badge--valid" : "policy-badge policy-badge--invalid"}>
                 {aiDraft.validation?.valid ? "Valid draft" : "Needs review"}
               </span>
             ) : null}
+          </div>
+
+          <div className="policy-safety-notes">
+            <p>
+              AI drafts are not saved, enabled, reloaded, deployed, or executed automatically.
+            </p>
+            <p>
+              Flow: select an unmatched anomaly, generate a draft, review validation, copy it into the editor, then explicitly save it as a disabled draft.
+            </p>
+          </div>
+
+          <div className="policy-detail-grid policy-detail-grid--single">
+            <div>
+              <span>Selected unmatched anomaly</span>
+              <strong>
+                {selectedUnmatchedAnomaly
+                  ? `${display(selectedUnmatchedAnomaly.id)} / ${display(selectedUnmatchedAnomaly.service)} / ${display(
+                      selectedUnmatchedAnomaly.anomaly_type
+                    )}`
+                  : "Select an unmatched anomaly from the policy gaps list."}
+              </strong>
+            </div>
           </div>
 
           {aiError ? <p className="policy-error-text">{aiError}</p> : null}
@@ -832,8 +862,8 @@ function PolicyStudio({
                 <button className="action-button" type="button" onClick={copyDraftToEditor}>
                   Copy to Editor
                 </button>
-                <button className="action-button" type="button" onClick={saveDraftAsPolicy} disabled={!adminKey.trim() || Boolean(actionBusy)}>
-                  Save as Draft
+                <button className="action-button" type="button" onClick={saveDraftAsPolicy} disabled={!adminVerified || Boolean(actionBusy)}>
+                  Save as Disabled Draft
                 </button>
                 <button className="action-button action-button--muted" type="button" onClick={() => setAiDraft(null)}>
                   Clear Draft
@@ -845,8 +875,8 @@ function PolicyStudio({
               {currentScenarioEvidence
                 ? `Current evidence: ${currentScenarioEvidence.anomalyType || "Unknown"} anomaly on ${
                     currentScenarioEvidence.service || "unknown service"
-                  }.`
-                : "Select an unmatched anomaly and generate a draft for human review."}
+                  }. Select an unmatched anomaly above to generate DSL from the backend AI endpoint.`
+                : "Select an unmatched anomaly above, verify the admin key, then click Generate AI Draft. The draft will appear here for review."}
             </EmptyState>
           )}
         </section>

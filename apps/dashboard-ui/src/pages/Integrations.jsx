@@ -240,7 +240,7 @@ function Integrations({ externalLinks, anomaliesCount, rcasCount }) {
       </section>
 
       <section className="integrations-split">
-        <section className="panel integrations-section">
+        <section className="panel integrations-section integrations-download-panel">
           <div className="section-heading">
             <div>
               <p className="section-heading__eyebrow">Download</p>

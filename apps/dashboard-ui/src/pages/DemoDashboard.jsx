@@ -1,6 +1,5 @@
 import LoadingPulse from "../components/LoadingPulse";
 import PageHeader from "../components/PageHeader";
-import { PP2_SCENARIO_EVIDENCE } from "../lib/scenarioEvidence";
 
 const SCENARIOS = [
   {
@@ -41,6 +40,8 @@ const scrollToEvidence = () => {
   document.getElementById("demo-evidence")?.scrollIntoView({ behavior: "smooth", block: "start" });
 };
 
+const firstAvailable = (...values) => values.find((value) => value !== null && typeof value !== "undefined" && value !== "");
+
 function DemoDashboard({
   loading,
   selectedSystem,
@@ -78,7 +79,15 @@ function DemoDashboard({
 }) {
   const selectedScenarioLabel = selectedPp2ScenarioKey || "None";
   const systemLabel = selectedSystem === "odoo" ? "Odoo" : "ERP-simulator";
-  const latestWindowId = currentScenarioEvidence?.windowIds?.[0] || selectedWindowId;
+  const latestBoundWindowId = firstAvailable(
+    currentScenarioEvidence?.windowIds?.[0],
+    selectedWindowId
+  );
+  const latestBoundObservedAt = firstAvailable(
+    currentScenarioEvidence?.observedAt,
+    latestPolicyDecision?.ts_utc,
+    latestPolicyDecision?.ts
+  );
   const topRca = latestRca?.rankedCauses?.[0];
   const resultSummary = {
     windowId: selectedWindowId || "Current live state",
@@ -152,12 +161,12 @@ function DemoDashboard({
           <>
             <div className="demo-scenario-grid">
               {SCENARIOS.map((scenario) => {
-                const staticEvidence = PP2_SCENARIO_EVIDENCE[scenario.key];
                 const isSelected = selectedPp2ScenarioKey === scenario.key;
                 const isRunning = runningScenario === scenario.key;
-                const observedWindowId = isSelected
-                  ? latestWindowId
-                  : staticEvidence?.windowIds?.[staticEvidence.windowIds.length - 1];
+                const observedWindowId = isSelected ? latestBoundWindowId : "";
+                const evidenceSource = observedWindowId
+                  ? "Live policy audit / dashboard state"
+                  : "No live evidence observed";
 
                 return (
                   <article
@@ -187,9 +196,19 @@ function DemoDashboard({
                         <strong>{scenario.verification}</strong>
                       </div>
                       <div>
-                        <span>Latest observed window</span>
-                        <strong>{observedWindowId || "Not available"}</strong>
+                        <span>Evidence source</span>
+                        <strong>{evidenceSource}</strong>
                       </div>
+                      <div>
+                        <span>{latestBoundObservedAt && observedWindowId ? "Last observed window" : "Latest observed window"}</span>
+                        <strong>{observedWindowId || "No live window observed yet"}</strong>
+                      </div>
+                      {latestBoundObservedAt && observedWindowId ? (
+                        <div>
+                          <span>Last observed at</span>
+                          <strong>{formatDateTime(latestBoundObservedAt)}</strong>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="scenario-actions demo-card-actions">

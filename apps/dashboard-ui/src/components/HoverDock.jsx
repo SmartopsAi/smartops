@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 const iconProps = {
   width: "22",
   height: "22",
@@ -68,8 +70,20 @@ const NAV_ITEMS = [
 ];
 
 function HoverDock({ activePage, onPageChange }) {
+  const [autoClosed, setAutoClosed] = useState(false);
+
+  const handleSelect = (pageKey, event) => {
+    onPageChange(pageKey);
+    setAutoClosed(true);
+    event.currentTarget.blur();
+  };
+
   return (
-    <nav className="hover-dock" aria-label="SmartOps sections">
+    <nav
+      className={`hover-dock ${autoClosed ? "hover-dock--auto-closed" : ""}`}
+      aria-label="SmartOps sections"
+      onMouseLeave={() => setAutoClosed(false)}
+    >
       <div className="hover-dock__brand" aria-hidden="true">
         SO
       </div>
@@ -79,7 +93,7 @@ function HoverDock({ activePage, onPageChange }) {
             key={item.key}
             type="button"
             className={`hover-dock__item ${activePage === item.key ? "hover-dock__item--active" : ""}`}
-            onClick={() => onPageChange(item.key)}
+            onClick={(event) => handleSelect(item.key, event)}
             aria-current={activePage === item.key ? "page" : undefined}
             aria-label={item.label}
             title={item.label}
