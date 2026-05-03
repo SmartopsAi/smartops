@@ -16,6 +16,10 @@ async function fetchJson(path, options = {}) {
   return response.json();
 }
 
+function adminHeaders(adminKey) {
+  return adminKey ? { "X-SmartOps-Admin-Key": adminKey } : {};
+}
+
 export function getOverview() {
   return fetchJson("/api/overview");
 }
@@ -83,6 +87,100 @@ export function triggerAction(payload) {
 export function verifyDeployment(payload) {
   return fetchJson("/api/verification", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function verifyAdminKey(adminKey) {
+  return fetchJson("/api/admin/verify", {
+    headers: adminHeaders(adminKey),
+  });
+}
+
+export function getPolicyDefinitions() {
+  return fetchJson("/api/policies/definitions");
+}
+
+export function getPolicyDefinition(policyId) {
+  return fetchJson(`/api/policies/definitions/${encodeURIComponent(policyId)}`);
+}
+
+export function validatePolicyDsl(payload) {
+  return fetchJson("/api/policies/validate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createPolicyDefinition(payload, adminKey) {
+  return fetchJson("/api/policies/definitions", {
+    method: "POST",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updatePolicyDefinition(policyId, payload, adminKey) {
+  return fetchJson(`/api/policies/definitions/${encodeURIComponent(policyId)}`, {
+    method: "PUT",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deletePolicyDefinition(policyId, payload, adminKey) {
+  return fetchJson(`/api/policies/definitions/${encodeURIComponent(policyId)}`, {
+    method: "DELETE",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function enablePolicyDefinition(policyId, payload, adminKey) {
+  return fetchJson(`/api/policies/definitions/${encodeURIComponent(policyId)}/enable`, {
+    method: "POST",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function disablePolicyDefinition(policyId, payload, adminKey) {
+  return fetchJson(`/api/policies/definitions/${encodeURIComponent(policyId)}/disable`, {
+    method: "POST",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function reloadPolicies(payload, adminKey) {
+  return fetchJson("/api/policies/reload", {
+    method: "POST",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getPolicyChangeAudit(limit) {
+  const suffix = limit ? `?limit=${encodeURIComponent(limit)}` : "";
+  return fetchJson(`/api/policies/change-audit${suffix}`);
+}
+
+export function getUnmatchedAnomalies() {
+  return fetchJson("/api/policies/unmatched-anomalies");
+}
+
+export function updateUnmatchedAnomalyStatus(id, payload, adminKey) {
+  return fetchJson(`/api/policies/unmatched-anomalies/${encodeURIComponent(id)}/status`, {
+    method: "POST",
+    headers: adminHeaders(adminKey),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function generatePolicyDraft(payload, adminKey) {
+  return fetchJson("/api/policies/generate-draft", {
+    method: "POST",
+    headers: adminHeaders(adminKey),
     body: JSON.stringify(payload),
   });
 }

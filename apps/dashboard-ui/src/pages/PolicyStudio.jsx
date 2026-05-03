@@ -1,51 +1,30 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import EmptyState from "../components/EmptyState";
 import PageHeader from "../components/PageHeader";
-import { getPolicies, getPolicyDecisions } from "../lib/api";
+import {
+  createPolicyDefinition,
+  deletePolicyDefinition,
+  disablePolicyDefinition,
+  enablePolicyDefinition,
+  generatePolicyDraft,
+  getPolicyChangeAudit,
+  getPolicyDefinitions,
+  getUnmatchedAnomalies,
+  reloadPolicies,
+  updatePolicyDefinition,
+  updateUnmatchedAnomalyStatus,
+  validatePolicyDsl,
+  verifyAdminKey,
+} from "../lib/api";
 
-const FALLBACK_POLICIES = [
-  {
-    name: "scale_up_on_anomaly_resource_step_1",
-    trigger: "RESOURCE anomaly",
-    action: "Scale ERP simulator to 4 replicas",
-    guardrail: "Priority matrix and verification required",
-  },
-  {
-    name: "scale_up_on_anomaly_resource_step_2",
-    trigger: "Escalated RESOURCE anomaly",
-    action: "Scale up when first remediation is insufficient",
-    guardrail: "Bounded scale target and verification required",
-  },
-  {
-    name: "restart_on_anomaly_error",
-    trigger: "ERROR anomaly",
-    action: "Restart ERP simulator deployment",
-    guardrail: "Restart cooldown applies",
-  },
-  {
-    name: "restart cooldown guardrail",
-    trigger: "Repeated restart request",
-    action: "Block repeated disruptive restart",
-    guardrail: "Cooldown window prevents repeated restart",
-  },
-];
+const DEFAULT_DSL = `POLICY "operator_review_draft":
+  WHEN anomaly.type == "error"
+       AND anomaly.score >= 0.9
+  THEN restart(service)
+  PRIORITY 200`;
 
-const DSL_PREVIEW = `policy "scale_up_on_anomaly_resource_step_1" {
-  when anomaly.type == "RESOURCE" and priority.label in ["P1", "P2"]
-  then action.scale deployment "smartops-erp-simulator" replicas 4
-  verify deployment_ready
-}
-
-policy "restart_on_anomaly_error" {
-  when anomaly.type == "ERROR" and rca.confidence >= 0.8
-  then action.restart deployment "smartops-erp-simulator"
-  verify deployment_ready
-}
-
-guardrail "restart cooldown" {
-  when action.type == "restart"
-  block if previous_restart.within_seconds < 900
-}`;
+const display = (value, fallback = "Not available") =>
+  value === null || typeof value === "undefined" || value === "" ? fallback : value;
 
 const normalizeList = (payload, keys) => {
   if (Array.isArray(payload)) return payload;
@@ -55,8 +34,32 @@ const normalizeList = (payload, keys) => {
   return [];
 };
 
-const display = (value, fallback = "Not available") =>
-  value === null || typeof value === "undefined" || value === "" ? fallback : value;
+const getPolicyId = (policy) => policy?.id || policy?.policy_id || policy?.name || "";
+
+const getPolicyStatus = (policy) => {
+  if (policy?.deleted) return "deleted";
+  if (policy?.status) return String(policy.status).toLowerCase();
+  if (policy?.enabled) return "active";
+  return "draft";
+};
+
+const statusClass = (status) => `policy-badge policy-badge--${String(status || "draft").toLowerCase()}`;
+
+const getParsedActionType = (policy) => {
+  const action = policy?.parsed?.action || policy?.action || {};
+  if (typeof action === "string") return action;
+  return action.type || action.action_type || action.name || "Not available";
+};
+
+const getParsedPriority = (policy) =>
+  policy?.parsed?.priority ?? policy?.priority ?? policy?.priority_score ?? "Not available";
+
+const extractDraftName = (draft) => {
+  const parsedName = draft?.validation?.parsed?.policies?.[0]?.name || draft?.parsed?.policies?.[0]?.name;
+  if (parsedName) return parsedName;
+  const match = String(draft?.draft_dsl || "").match(/POLICY\s+"([^"]+)"/i);
+  return match?.[1] || "ai_generated_policy_draft";
+};
 
 function PolicyStudio({
   latestPolicyDecision,
@@ -65,87 +68,336 @@ function PolicyStudio({
   humanizePolicyLabel,
   humanizeActionLabel,
 }) {
-  const [policies, setPolicies] = useState([]);
-  const [policyError, setPolicyError] = useState("");
+  const [adminKey, setAdminKey] = useState("");
+  const [adminVerified, setAdminVerified] = useState(false);
+  const [adminError, setAdminError] = useState("");
+
+  const [policyDefinitions, setPolicyDefinitions] = useState([]);
   const [policiesLoading, setPoliciesLoading] = useState(true);
-  const [decisions, setDecisions] = useState([]);
-  const [decisionsError, setDecisionsError] = useState("");
-  const [decisionsLoading, setDecisionsLoading] = useState(true);
+  const [policyError, setPolicyError] = useState("");
+  const [selectedPolicyId, setSelectedPolicyId] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
+  const [editorName, setEditorName] = useState("operator_review_draft");
+  const [editorDsl, setEditorDsl] = useState(DEFAULT_DSL);
+  const [editorReason, setEditorReason] = useState("");
 
-    const loadPolicies = async () => {
-      try {
-        setPoliciesLoading(true);
-        const payload = await getPolicies();
-        if (!cancelled) {
-          setPolicies(normalizeList(payload, ["policies", "items", "results"]));
-          setPolicyError("");
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setPolicies([]);
-          setPolicyError(err.message || "Policy API unavailable.");
-        }
-      } finally {
-        if (!cancelled) setPoliciesLoading(false);
-      }
-    };
+  const [validationResult, setValidationResult] = useState(null);
+  const [validationLoading, setValidationLoading] = useState(false);
 
-    const loadDecisions = async () => {
-      try {
-        setDecisionsLoading(true);
-        const payload = await getPolicyDecisions(8);
-        if (!cancelled) {
-          setDecisions(normalizeList(payload, ["decisions", "items", "results"]));
-          setDecisionsError("");
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setDecisions([]);
-          setDecisionsError(err.message || "Policy decisions API unavailable.");
-        }
-      } finally {
-        if (!cancelled) setDecisionsLoading(false);
-      }
-    };
+  const [unmatchedAnomalies, setUnmatchedAnomalies] = useState([]);
+  const [unmatchedLoading, setUnmatchedLoading] = useState(true);
+  const [unmatchedError, setUnmatchedError] = useState("");
+  const [selectedUnmatchedId, setSelectedUnmatchedId] = useState("");
 
-    loadPolicies();
-    loadDecisions();
+  const [aiDraft, setAiDraft] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
 
-    return () => {
-      cancelled = true;
-    };
+  const [changeAudit, setChangeAudit] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [auditError, setAuditError] = useState("");
+
+  const [actionBusy, setActionBusy] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [actionError, setActionError] = useState("");
+
+  const activeCount = useMemo(
+    () =>
+      policyDefinitions.filter(
+        (policy) => policy.enabled === true && !policy.deleted && getPolicyStatus(policy) === "active"
+      ).length,
+    [policyDefinitions]
+  );
+
+  const selectedPolicy = useMemo(
+    () => policyDefinitions.find((policy) => getPolicyId(policy) === selectedPolicyId) || null,
+    [policyDefinitions, selectedPolicyId]
+  );
+
+  const visibleAudit = useMemo(() => changeAudit.slice(0, 12), [changeAudit]);
+
+  const selectPolicy = useCallback((policy) => {
+    const id = getPolicyId(policy);
+    setSelectedPolicyId(id);
+    setEditorName(policy?.name || policy?.id || "");
+    setEditorDsl(policy?.dsl || DEFAULT_DSL);
+    setValidationResult(policy?.validation || null);
+    setActionMessage("");
+    setActionError("");
   }, []);
 
-  const policyCards = useMemo(() => {
-    const apiPolicies = policies.map((policy) => ({
-      name: policy.name || policy.policy || policy.id || "Unnamed policy",
-      trigger: policy.trigger || policy.anomaly_type || policy.anomalyType || "Not available",
-      action: policy.action || policy.action_type || policy.actionType || "Not available",
-      guardrail: policy.guardrail || policy.guardrail_reason || "Not available",
-      priorityLabel: policy.priority_label || policy.priorityLabel || policy.priority || "Not available",
-      priorityScore: policy.priority_score ?? policy.priorityScore ?? "Not available",
-      lastMatched: policy.last_matched || policy.lastMatched || policy.updated_at || "",
-      source: "Policy API",
-    }));
+  const loadPolicyDefinitions = useCallback(async () => {
+    try {
+      setPoliciesLoading(true);
+      const payload = await getPolicyDefinitions();
+      const definitions = normalizeList(payload, ["policies", "items", "results", "definitions"]);
+      setPolicyDefinitions(definitions);
+      setPolicyError("");
+      setSelectedPolicyId((currentId) => {
+        if (currentId && definitions.some((policy) => getPolicyId(policy) === currentId)) {
+          return currentId;
+        }
+        const firstAvailable = definitions.find((policy) => !policy.deleted) || definitions[0];
+        if (firstAvailable) {
+          setEditorName(firstAvailable.name || firstAvailable.id || "");
+          setEditorDsl(firstAvailable.dsl || DEFAULT_DSL);
+          setValidationResult(firstAvailable.validation || null);
+          return getPolicyId(firstAvailable);
+        }
+        return "";
+      });
+    } catch (err) {
+      setPolicyDefinitions([]);
+      setPolicyError(err.message || "Policy definitions API unavailable.");
+    } finally {
+      setPoliciesLoading(false);
+    }
+  }, []);
 
-    if (apiPolicies.length) return apiPolicies;
+  const loadUnmatchedAnomalies = useCallback(async () => {
+    try {
+      setUnmatchedLoading(true);
+      const payload = await getUnmatchedAnomalies();
+      setUnmatchedAnomalies(
+        normalizeList(payload, ["unmatched_anomalies", "anomalies", "items", "results", "records"])
+      );
+      setUnmatchedError("");
+    } catch (err) {
+      setUnmatchedAnomalies([]);
+      setUnmatchedError(err.message || "Unmatched anomaly API unavailable.");
+    } finally {
+      setUnmatchedLoading(false);
+    }
+  }, []);
 
-    return FALLBACK_POLICIES.map((policy) => ({
-      ...policy,
-      priorityLabel: latestPolicyDecision?.priority_label || "Not available",
-      priorityScore: latestPolicyDecision?.priority_score ?? "Not available",
-      lastMatched:
-        latestPolicyDecision?.policy && policy.name.includes(String(latestPolicyDecision.policy))
-          ? latestPolicyDecision.ts_utc || latestPolicyDecision.ts
-          : "",
-      source: "Known SmartOps fallback preview",
-    }));
-  }, [policies, latestPolicyDecision]);
+  const loadChangeAudit = useCallback(async () => {
+    try {
+      setAuditLoading(true);
+      const payload = await getPolicyChangeAudit(25);
+      const events = normalizeList(payload, ["events", "audit", "items", "results"]);
+      setChangeAudit(events.reverse());
+      setAuditError("");
+    } catch (err) {
+      setChangeAudit([]);
+      setAuditError(err.message || "Policy change audit unavailable.");
+    } finally {
+      setAuditLoading(false);
+    }
+  }, []);
 
-  const recentDecisions = decisions.length ? decisions : latestPolicyDecision ? [latestPolicyDecision] : [];
+  const refreshAll = useCallback(async () => {
+    await Promise.all([loadPolicyDefinitions(), loadUnmatchedAnomalies(), loadChangeAudit()]);
+  }, [loadChangeAudit, loadPolicyDefinitions, loadUnmatchedAnomalies]);
+
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  const requireAdmin = () => {
+    if (!adminKey.trim()) {
+      setActionError("Admin API key is required for this action.");
+      return false;
+    }
+    return true;
+  };
+
+  const actionPayload = (fallbackReason = "Policy Studio update") => ({
+    updated_by: "operator",
+    reason: editorReason || fallbackReason,
+  });
+
+  const runProtectedAction = async (label, operation) => {
+    if (!requireAdmin()) return;
+    try {
+      setActionBusy(label);
+      setActionError("");
+      setActionMessage("");
+      await operation();
+      setActionMessage(`${label} completed.`);
+      await refreshAll();
+    } catch (err) {
+      setActionError(err.message || `${label} failed.`);
+    } finally {
+      setActionBusy("");
+    }
+  };
+
+  const handleVerifyAdmin = async () => {
+    if (!adminKey.trim()) {
+      setAdminVerified(false);
+      setAdminError("Invalid/missing key.");
+      return;
+    }
+    try {
+      setAdminError("");
+      const payload = await verifyAdminKey(adminKey.trim());
+      setAdminVerified(Boolean(payload?.admin || payload?.status === "ok"));
+      if (!(payload?.admin || payload?.status === "ok")) {
+        setAdminError("Admin verification did not return an approved status.");
+      }
+    } catch (err) {
+      setAdminVerified(false);
+      setAdminError(err.message || "Admin verification failed.");
+    }
+  };
+
+  const handleClearAdmin = () => {
+    setAdminKey("");
+    setAdminVerified(false);
+    setAdminError("");
+  };
+
+  const handleValidate = async (dsl = editorDsl) => {
+    try {
+      setValidationLoading(true);
+      setActionError("");
+      const result = await validatePolicyDsl({ dsl, mode: "draft" });
+      setValidationResult(result);
+      setActionMessage(result?.valid ? "DSL validation passed." : "DSL validation failed.");
+      return result;
+    } catch (err) {
+      setValidationResult({
+        valid: false,
+        errors: [{ field: "dsl", message: err.message || "Validation request failed." }],
+        warnings: [],
+        parsed: null,
+      });
+      setActionError(err.message || "Validation request failed.");
+      return null;
+    } finally {
+      setValidationLoading(false);
+    }
+  };
+
+  const handleCreateDraft = async (dsl = editorDsl, name = editorName, reason = "Policy Studio create draft") => {
+    await runProtectedAction("Create Draft", async () => {
+      const payload = {
+        name,
+        dsl,
+        updated_by: "operator",
+        reason: editorReason || reason,
+      };
+      const created = await createPolicyDefinition(payload, adminKey.trim());
+      const policy = created?.policy;
+      if (policy) {
+        selectPolicy(policy);
+      }
+    });
+  };
+
+  const handleUpdateSelected = async () => {
+    if (!selectedPolicyId) {
+      setActionError("Select a policy before updating.");
+      return;
+    }
+    await runProtectedAction("Update Selected", async () => {
+      await updatePolicyDefinition(
+        selectedPolicyId,
+        {
+          name: editorName,
+          dsl: editorDsl,
+          updated_by: "operator",
+          reason: editorReason || "Policy Studio update",
+        },
+        adminKey.trim()
+      );
+    });
+  };
+
+  const handleSoftDelete = async () => {
+    if (!selectedPolicyId) {
+      setActionError("Select a policy before deleting.");
+      return;
+    }
+    if (!window.confirm("Soft delete this policy? It will be disabled and marked deleted.")) return;
+    await runProtectedAction("Soft Delete", async () => {
+      await deletePolicyDefinition(selectedPolicyId, actionPayload("Policy Studio soft delete"), adminKey.trim());
+    });
+  };
+
+  const handleEnable = async () => {
+    if (!selectedPolicyId) {
+      setActionError("Select a policy before enabling.");
+      return;
+    }
+    if (!window.confirm("Enable this policy for the active policy set?")) return;
+    await runProtectedAction("Enable Policy", async () => {
+      await enablePolicyDefinition(selectedPolicyId, actionPayload("Policy Studio enable"), adminKey.trim());
+    });
+  };
+
+  const handleDisable = async () => {
+    if (!selectedPolicyId) {
+      setActionError("Select a policy before disabling.");
+      return;
+    }
+    await runProtectedAction("Disable Policy", async () => {
+      await disablePolicyDefinition(selectedPolicyId, actionPayload("Policy Studio disable"), adminKey.trim());
+    });
+  };
+
+  const handleReload = async () => {
+    if (!window.confirm("Reload the active policy set after validation?")) return;
+    await runProtectedAction("Reload Active Set", async () => {
+      await reloadPolicies(actionPayload("Policy Studio reload"), adminKey.trim());
+    });
+  };
+
+  const handleUpdateUnmatchedStatus = async (anomaly, status) => {
+    const id = anomaly?.id;
+    if (!id) return;
+    await runProtectedAction(`Mark ${status}`, async () => {
+      await updateUnmatchedAnomalyStatus(
+        id,
+        {
+          status,
+          updated_by: "operator",
+          reason: "Reviewed in Policy Studio",
+        },
+        adminKey.trim()
+      );
+    });
+  };
+
+  const handleGenerateDraft = async (anomaly) => {
+    if (!requireAdmin()) return;
+    try {
+      setSelectedUnmatchedId(anomaly?.id || "");
+      setAiLoading(true);
+      setAiError("");
+      setActionError("");
+      const result = await generatePolicyDraft(
+        {
+          unmatched_anomaly_id: anomaly?.id,
+          constraints: {
+            preferred_action: "auto",
+            max_replicas: 4,
+          },
+        },
+        adminKey.trim()
+      );
+      setAiDraft(result);
+      setActionMessage("AI draft generated for human review.");
+    } catch (err) {
+      setAiError(err.message || "AI draft generation failed.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const copyDraftToEditor = () => {
+    if (!aiDraft?.draft_dsl) return;
+    setEditorDsl(aiDraft.draft_dsl);
+    setEditorName(extractDraftName(aiDraft));
+    setValidationResult(aiDraft.validation || null);
+    setActionMessage("AI draft copied into editor. Review before saving.");
+  };
+
+  const saveDraftAsPolicy = async () => {
+    if (!aiDraft?.draft_dsl) return;
+    await handleCreateDraft(aiDraft.draft_dsl, extractDraftName(aiDraft), "AI draft saved after human review");
+  };
+
   const latestActionPlan = latestPolicyDecision?.action_plan || {};
   const latestPriorityAvailable = Boolean(
     latestPolicyDecision?.priority_label ||
@@ -154,107 +406,269 @@ function PolicyStudio({
       latestPolicyDecision?.decision
   );
 
+  const selectedStatus = getPolicyStatus(selectedPolicy);
+
   return (
     <div className="policy-studio">
       <PageHeader
         eyebrow="Policy"
         title="Policy Studio"
-        description="Review DSL policies, priority matrix outcomes, unmatched anomalies, and AI-assisted policy drafts."
+        description="Review, validate, draft, and safely deploy SmartOps DSL policies."
         meta={
           <>
-            <span>Mode: Policy preview</span>
-            <span>Priority Matrix: Enabled</span>
-            <span>CRUD: Coming soon</span>
-            <span>AI Drafting: Human approval required</span>
+            <span>Mode: Governed</span>
+            <span>Admin: {adminVerified ? "Verified" : "Not verified"}</span>
+            <span>Policies: {policyDefinitions.length}</span>
+            <span>Active: {activeCount}</span>
+            <span>Unmatched: {unmatchedAnomalies.length}</span>
           </>
         }
       />
 
-      <section className="panel policy-section">
+      <section className="panel policy-section policy-admin-panel">
         <div className="section-heading">
           <div>
-            <p className="section-heading__eyebrow">Current DSL Policies</p>
-            <h2>Read-only policy catalog</h2>
+            <p className="section-heading__eyebrow">Admin Access</p>
+            <h2>Protected policy operations</h2>
           </div>
-          <div className="section-heading__meta">
-            <span>{policiesLoading ? "Loading policies" : policyCards.length ? "Policies available" : "Preview fallback"}</span>
-          </div>
+          <span className={adminVerified ? "policy-badge policy-badge--valid" : "policy-badge policy-badge--invalid"}>
+            {adminVerified ? "Verified" : "Not verified"}
+          </span>
         </div>
 
-        {policyError ? (
-          <div className="empty-state policy-inline-state">
-            <h3>Policy API unavailable</h3>
-            <p>{policyError}. Showing known SmartOps policy previews instead.</p>
+        <div className="policy-admin-panel__form">
+          <label>
+            <span>Admin API Key</span>
+            <input
+              type="password"
+              value={adminKey}
+              onChange={(event) => {
+                setAdminKey(event.target.value);
+                setAdminVerified(false);
+              }}
+              placeholder="Enter key for protected actions"
+              autoComplete="off"
+            />
+          </label>
+          <div className="policy-action-row">
+            <button className="action-button" type="button" onClick={handleVerifyAdmin} disabled={!adminKey.trim()}>
+              Verify admin key
+            </button>
+            <button className="action-button action-button--muted" type="button" onClick={handleClearAdmin}>
+              Clear key
+            </button>
           </div>
-        ) : null}
-
-        <div className="policy-card-grid">
-          {policyCards.map((policy) => (
-            <article key={policy.name} className="policy-card">
-              <div className="policy-card__top">
-                <h3>{policy.name}</h3>
-                <span className="service-card__status service-card__status--configured">Read-only preview</span>
-              </div>
-              <div className="policy-detail-grid">
-                <div>
-                  <span>Trigger / anomaly type</span>
-                  <strong>{display(policy.trigger)}</strong>
-                </div>
-                <div>
-                  <span>Expected action</span>
-                  <strong>{display(policy.action)}</strong>
-                </div>
-                <div>
-                  <span>Guardrail behavior</span>
-                  <strong>{display(policy.guardrail)}</strong>
-                </div>
-                <div>
-                  <span>Priority</span>
-                  <strong>
-                    {display(policy.priorityLabel)} / {display(policy.priorityScore)}
-                  </strong>
-                </div>
-                <div>
-                  <span>Last matched</span>
-                  <strong>{policy.lastMatched ? formatDateTime(policy.lastMatched) : "Not available"}</strong>
-                </div>
-                <div>
-                  <span>Source</span>
-                  <strong>{policy.source}</strong>
-                </div>
-              </div>
-            </article>
-          ))}
         </div>
+        {adminError ? <p className="policy-error-text">{adminError}</p> : null}
+        <p className="policy-muted-text">
+          The admin key is kept only in React state for this page session. It is never shown after entry and is not stored in localStorage.
+        </p>
       </section>
 
-      <section className="policy-studio__split">
+      <section className="policy-studio-grid">
         <section className="panel policy-section">
           <div className="section-heading">
             <div>
-              <p className="section-heading__eyebrow">Policy Editor Preview</p>
-              <h2>Read-only DSL preview</h2>
+              <p className="section-heading__eyebrow">Policy Catalog</p>
+              <h2>Policy definitions</h2>
+            </div>
+            <div className="section-heading__meta">
+              <span>{policiesLoading ? "Loading" : "Read endpoint"}</span>
             </div>
           </div>
 
-          <pre className="policy-code-preview">
-            <code>{DSL_PREVIEW}</code>
-          </pre>
+          {policyError ? (
+            <EmptyState title="Policy definitions unavailable">{policyError}</EmptyState>
+          ) : policyDefinitions.length ? (
+            <div className="policy-list">
+              {policyDefinitions.map((policy) => {
+                const id = getPolicyId(policy);
+                const status = getPolicyStatus(policy);
+                const selected = id === selectedPolicyId;
+                return (
+                  <button
+                    key={id}
+                    className={`policy-list-card${selected ? " policy-list-card--selected" : ""}`}
+                    type="button"
+                    onClick={() => selectPolicy(policy)}
+                  >
+                    <div className="policy-list-card__top">
+                      <strong>{display(policy.name || id)}</strong>
+                      <span className={statusClass(status)}>{status}</span>
+                    </div>
+                    <div className="policy-list-card__meta">
+                      <span>ID: {display(id)}</span>
+                      <span>Enabled: {policy.enabled ? "true" : "false"}</span>
+                      <span>Version: {display(policy.version, "1")}</span>
+                      <span>Action: {getParsedActionType(policy)}</span>
+                      <span>Priority: {getParsedPriority(policy)}</span>
+                      <span>Source: {display(policy.source)}</span>
+                      <span>Updated by: {display(policy.updated_by)}</span>
+                      <span>Updated: {policy.updated_at ? formatDateTime(policy.updated_at) : "Not available"}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState title="No policy definitions found">
+              Create a disabled draft policy after validating DSL, or check the policy engine connection.
+            </EmptyState>
+          )}
+        </section>
 
-          <div className="policy-editor-actions">
-            {["Validate DSL", "Save Policy", "Delete Policy", "Deploy Policy"].map((label) => (
-              <button key={label} className="action-button" type="button" disabled>
-                {label} - Coming soon
-              </button>
-            ))}
+        <section className="panel policy-section policy-editor">
+          <div className="section-heading">
+            <div>
+              <p className="section-heading__eyebrow">DSL Editor</p>
+              <h2>{selectedPolicy ? "Selected policy editor" : "Draft editor"}</h2>
+            </div>
+            {selectedPolicy ? <span className={statusClass(selectedStatus)}>{selectedStatus}</span> : null}
           </div>
+
+          <div className="policy-editor-fields">
+            <label>
+              <span>Policy name</span>
+              <input value={editorName} onChange={(event) => setEditorName(event.target.value)} />
+            </label>
+            <label>
+              <span>Reason for audit log</span>
+              <input
+                value={editorReason}
+                onChange={(event) => setEditorReason(event.target.value)}
+                placeholder="Reason for audit log"
+              />
+            </label>
+            <label className="policy-editor-fields__dsl">
+              <span>Policy DSL</span>
+              <textarea
+                className="policy-code-textarea"
+                value={editorDsl}
+                onChange={(event) => setEditorDsl(event.target.value)}
+                spellCheck="false"
+              />
+            </label>
+          </div>
+
+          <div className="policy-action-row policy-action-row--wrap">
+            <button className="action-button" type="button" onClick={() => handleValidate()} disabled={validationLoading}>
+              {validationLoading ? "Validating..." : "Validate DSL"}
+            </button>
+            <button className="action-button" type="button" onClick={() => handleCreateDraft()} disabled={!adminKey.trim() || Boolean(actionBusy)}>
+              Create Draft
+            </button>
+            <button className="action-button" type="button" onClick={handleUpdateSelected} disabled={!adminKey.trim() || !selectedPolicyId || Boolean(actionBusy)}>
+              Update Selected
+            </button>
+            <button className="action-button action-button--danger" type="button" onClick={handleSoftDelete} disabled={!adminKey.trim() || !selectedPolicyId || Boolean(actionBusy)}>
+              Soft Delete
+            </button>
+            <button className="action-button" type="button" onClick={handleEnable} disabled={!adminKey.trim() || !selectedPolicyId || Boolean(actionBusy)}>
+              Enable
+            </button>
+            <button className="action-button action-button--muted" type="button" onClick={handleDisable} disabled={!adminKey.trim() || !selectedPolicyId || Boolean(actionBusy)}>
+              Disable
+            </button>
+            <button className="action-button" type="button" onClick={handleReload} disabled={!adminKey.trim() || Boolean(actionBusy)}>
+              Reload Active Set
+            </button>
+            <button className="action-button action-button--muted" type="button" onClick={refreshAll} disabled={Boolean(actionBusy)}>
+              Refresh
+            </button>
+          </div>
+
+          {actionBusy ? <p className="policy-muted-text">Running: {actionBusy}</p> : null}
+          {actionMessage ? <p className="policy-success-text">{actionMessage}</p> : null}
+          {actionError ? <p className="policy-error-text">{actionError}</p> : null}
+        </section>
+      </section>
+
+      <section className="policy-studio__split">
+        <section className="panel policy-section policy-validation-panel">
+          <div className="section-heading">
+            <div>
+              <p className="section-heading__eyebrow">Validation</p>
+              <h2>DSL validation result</h2>
+            </div>
+            {validationResult ? (
+              <span className={validationResult.valid ? "policy-badge policy-badge--valid" : "policy-badge policy-badge--invalid"}>
+                {validationResult.valid ? "Valid" : "Invalid"}
+              </span>
+            ) : null}
+          </div>
+
+          {validationResult ? (
+            <div className="policy-validation-content">
+              <div className="policy-detail-grid">
+                <div>
+                  <span>Valid</span>
+                  <strong>{validationResult.valid ? "true" : "false"}</strong>
+                </div>
+                <div>
+                  <span>Policy count</span>
+                  <strong>{display(validationResult.parsed?.policy_count)}</strong>
+                </div>
+              </div>
+
+              <div className="policy-message-list">
+                <h3>Errors</h3>
+                {(validationResult.errors || []).length ? (
+                  (validationResult.errors || []).map((error, index) => (
+                    <p key={`${error.field || "error"}-${index}`} className="policy-error-text">
+                      {error.field ? `${error.field}: ` : ""}
+                      {error.message || String(error)}
+                    </p>
+                  ))
+                ) : (
+                  <p className="policy-muted-text">No errors.</p>
+                )}
+              </div>
+
+              <div className="policy-message-list">
+                <h3>Warnings</h3>
+                {(validationResult.warnings || []).length ? (
+                  (validationResult.warnings || []).map((warning, index) => (
+                    <p key={`warning-${index}`} className="policy-warning-text">
+                      {warning.message || String(warning)}
+                    </p>
+                  ))
+                ) : (
+                  <p className="policy-muted-text">No warnings.</p>
+                )}
+              </div>
+
+              {validationResult.parsed?.policies?.length ? (
+                <div className="policy-mini-list">
+                  {validationResult.parsed.policies.map((policy, index) => (
+                    <article key={`${policy.name || "policy"}-${index}`}>
+                      <strong>{display(policy.name)}</strong>
+                      <span>Action: {display(policy.action?.type || policy.action_type || policy.action)}</span>
+                      <span>Priority: {display(policy.priority)}</span>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+
+              {validationResult.safety ? (
+                <div className="policy-safety-grid">
+                  {Object.entries(validationResult.safety).map(([key, value]) => (
+                    <span key={key} className={value ? "policy-badge policy-badge--valid" : "policy-badge policy-badge--invalid"}>
+                      {key}: {String(value)}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <EmptyState title="No validation run yet">Validate the editor DSL or generate an AI draft to inspect safety results.</EmptyState>
+          )}
         </section>
 
         <section className="panel policy-section">
           <div className="section-heading">
             <div>
               <p className="section-heading__eyebrow">Priority Matrix</p>
-              <h2>Decision priority outcome</h2>
+              <h2>Latest decision context</h2>
             </div>
           </div>
 
@@ -276,34 +690,29 @@ function PolicyStudio({
           {latestPriorityAvailable ? (
             <div className="policy-detail-grid policy-detail-grid--single">
               <div>
-                <span>Latest priority label</span>
-                <strong>{display(latestPolicyDecision?.priority_label)}</strong>
-              </div>
-              <div>
-                <span>Latest priority score</span>
-                <strong>{display(latestPolicyDecision?.priority_score)}</strong>
-              </div>
-              <div>
-                <span>Policy rank / priority</span>
-                <strong>{display(latestPolicyDecision?.priority)}</strong>
-              </div>
-              <div>
-                <span>Guardrail reason</span>
-                <strong>{display(latestPolicyDecision?.guardrail_reason, "Not applicable")}</strong>
+                <span>Policy</span>
+                <strong>{humanizePolicyLabel(latestPolicyDecision?.policy, latestPolicyDecision?.guardrail_reason)}</strong>
               </div>
               <div>
                 <span>Decision</span>
                 <strong>{display(latestPolicyDecision?.decision)}</strong>
               </div>
               <div>
-                <span>Policy</span>
-                <strong>{humanizePolicyLabel(latestPolicyDecision?.policy, latestPolicyDecision?.guardrail_reason)}</strong>
+                <span>Action</span>
+                <strong>
+                  {humanizeActionLabel(latestActionPlan.type, latestPolicyDecision?.decision, latestPolicyDecision?.guardrail_reason)}
+                </strong>
+              </div>
+              <div>
+                <span>Priority</span>
+                <strong>
+                  {display(latestPolicyDecision?.priority_label || latestPolicyDecision?.priority)} /{" "}
+                  {display(latestPolicyDecision?.priority_score)}
+                </strong>
               </div>
             </div>
           ) : (
-            <EmptyState title="No recent priority decision">
-              Run a Demo Lab scenario or wait for a live policy decision to populate this panel.
-            </EmptyState>
+            <EmptyState title="No recent priority decision">Run a Demo Lab scenario to populate decision context.</EmptyState>
           )}
         </section>
       </section>
@@ -313,101 +722,166 @@ function PolicyStudio({
           <div className="section-heading">
             <div>
               <p className="section-heading__eyebrow">Unmatched Anomalies</p>
-              <h2>Unmatched anomalies</h2>
+              <h2>Policy gaps for review</h2>
+            </div>
+            <div className="section-heading__meta">
+              <span>{unmatchedLoading ? "Loading" : `${unmatchedAnomalies.length} records`}</span>
             </div>
           </div>
 
-          <EmptyState title="No unmatched anomaly API is connected yet.">
-            When an anomaly has no matching DSL policy, it will appear here for operator review.
-            The operator can then draft a new DSL policy, validate it, and deploy it after human approval.
-          </EmptyState>
-
-          <article className="policy-example-card">
-            <span className="badge">Example only - preview</span>
-            <h3>Unknown anomaly pattern</h3>
-            <p>Type: network_latency</p>
-            <p>Service: erp-simulator</p>
-            <p>RCA: External dependency timeout</p>
-            <p>Suggested response: Draft policy for review</p>
-          </article>
+          {unmatchedError ? (
+            <EmptyState title="Unmatched anomalies unavailable">{unmatchedError}</EmptyState>
+          ) : unmatchedAnomalies.length ? (
+            <div className="unmatched-anomaly-grid">
+              {unmatchedAnomalies.map((anomaly) => (
+                <article key={anomaly.id || anomaly.window_id} className="unmatched-anomaly-card">
+                  <div className="policy-list-card__top">
+                    <strong>{display(anomaly.id || anomaly.window_id)}</strong>
+                    <span className={statusClass(anomaly.status || "new")}>{display(anomaly.status, "new")}</span>
+                  </div>
+                  <div className="policy-detail-grid policy-detail-grid--single">
+                    <div>
+                      <span>Window / service</span>
+                      <strong>
+                        {display(anomaly.window_id)} / {display(anomaly.service)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Type / risk / score</span>
+                      <strong>
+                        {display(anomaly.anomaly_type)} / {display(anomaly.risk)} / {display(anomaly.score)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>RCA</span>
+                      <strong>
+                        {display(anomaly.rca_cause)} ({display(anomaly.rca_probability)})
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Count / first seen / last seen</span>
+                      <strong>
+                        {display(anomaly.count)} / {anomaly.first_seen ? formatDateTime(anomaly.first_seen) : "Not available"} /{" "}
+                        {anomaly.last_seen ? formatDateTime(anomaly.last_seen) : "Not available"}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="policy-action-row policy-action-row--wrap">
+                    <button className="action-button" type="button" onClick={() => handleGenerateDraft(anomaly)} disabled={!adminKey.trim() || aiLoading}>
+                      {selectedUnmatchedId === anomaly.id && aiLoading ? "Generating..." : "Generate AI Draft"}
+                    </button>
+                    <button className="action-button action-button--muted" type="button" onClick={() => handleUpdateUnmatchedStatus(anomaly, "ignored")} disabled={!adminKey.trim() || Boolean(actionBusy)}>
+                      Mark Ignored
+                    </button>
+                    <button className="action-button action-button--muted" type="button" onClick={() => handleUpdateUnmatchedStatus(anomaly, "resolved")} disabled={!adminKey.trim() || Boolean(actionBusy)}>
+                      Mark Resolved
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="No unmatched anomaly evidence">
+              Run a Demo Lab scenario or wait for live anomaly detection to create policy gap records.
+            </EmptyState>
+          )}
         </section>
 
-        <section className="panel policy-section">
+        <section className="panel policy-section ai-draft-panel">
           <div className="section-heading">
             <div>
-              <p className="section-heading__eyebrow">AI Draft Assistant</p>
-              <h2>AI Policy Draft Assistant</h2>
+              <p className="section-heading__eyebrow">AI Draft</p>
+              <h2>Human-reviewed policy draft</h2>
             </div>
+            {aiDraft ? (
+              <span className={aiDraft.validation?.valid ? "policy-badge policy-badge--valid" : "policy-badge policy-badge--invalid"}>
+                {aiDraft.validation?.valid ? "Valid draft" : "Needs review"}
+              </span>
+            ) : null}
           </div>
 
-          <div className="ai-draft-layout">
-            <article className="policy-example-card">
-              <h3>Anomaly summary preview</h3>
-              <p>
-                {currentScenarioEvidence
-                  ? `${currentScenarioEvidence.anomalyType || "Unknown"} anomaly on ${currentScenarioEvidence.service || "unknown service"}`
-                  : "Select or run an incident to preview anomaly context here."}
-              </p>
-            </article>
-            <pre className="policy-code-preview policy-code-preview--compact">
-              <code>{`draft policy "operator_review_required" {
-  when anomaly.pattern == "unmatched"
-  then suggest action.review
-  require human_approval
-}`}</code>
-            </pre>
-            <div className="policy-editor-actions">
-              <button className="action-button" type="button" disabled>
-                Generate policy draft - Coming soon
-              </button>
-              <button className="action-button" type="button" disabled>
-                Validate generated DSL - Coming soon
-              </button>
-              <button className="action-button" type="button" disabled>
-                Save after review - Coming soon
-              </button>
+          {aiError ? <p className="policy-error-text">{aiError}</p> : null}
+          {aiDraft ? (
+            <div className="ai-draft-panel__content">
+              <div className="policy-detail-grid">
+                <div>
+                  <span>Generation source</span>
+                  <strong>{display(aiDraft.generation_source)}</strong>
+                </div>
+                <div>
+                  <span>Model</span>
+                  <strong>{display(aiDraft.model)}</strong>
+                </div>
+              </div>
+              <pre className="policy-code-preview policy-code-preview--compact">
+                <code>{aiDraft.draft_dsl || "No draft DSL returned."}</code>
+              </pre>
+              <div className="policy-message-list">
+                {(aiDraft.warnings || []).map((warning, index) => (
+                  <p key={`ai-warning-${index}`} className="policy-warning-text">
+                    {warning}
+                  </p>
+                ))}
+                {(aiDraft.validation?.errors || []).map((error, index) => (
+                  <p key={`ai-error-${index}`} className="policy-error-text">
+                    {error.message || String(error)}
+                  </p>
+                ))}
+              </div>
+              <div className="policy-action-row policy-action-row--wrap">
+                <button className="action-button" type="button" onClick={copyDraftToEditor}>
+                  Copy to Editor
+                </button>
+                <button className="action-button" type="button" onClick={saveDraftAsPolicy} disabled={!adminKey.trim() || Boolean(actionBusy)}>
+                  Save as Draft
+                </button>
+                <button className="action-button action-button--muted" type="button" onClick={() => setAiDraft(null)}>
+                  Clear Draft
+                </button>
+              </div>
             </div>
-            <div className="policy-safety-notes">
-              <p>AI drafts require human approval.</p>
-              <p>DSL must be validated before deployment.</p>
-              <p>Guardrails and priority matrix still apply.</p>
-              <p>Never store secrets or credentials in frontend code.</p>
-            </div>
-          </div>
+          ) : (
+            <EmptyState title="No AI draft generated">
+              {currentScenarioEvidence
+                ? `Current evidence: ${currentScenarioEvidence.anomalyType || "Unknown"} anomaly on ${
+                    currentScenarioEvidence.service || "unknown service"
+                  }.`
+                : "Select an unmatched anomaly and generate a draft for human review."}
+            </EmptyState>
+          )}
         </section>
       </section>
 
       <section className="panel policy-section">
         <div className="section-heading">
           <div>
-            <p className="section-heading__eyebrow">Recent Decisions</p>
-            <h2>Recent policy decisions</h2>
+            <p className="section-heading__eyebrow">Audit</p>
+            <h2>Recent policy change audit</h2>
           </div>
           <div className="section-heading__meta">
-            <span>{decisionsLoading ? "Loading decisions" : decisionsError ? "Fallback context" : "Policy decisions API"}</span>
+            <span>{auditLoading ? "Loading audit" : auditError ? "Unavailable" : `${visibleAudit.length} events`}</span>
           </div>
         </div>
 
-        {decisionsError && !recentDecisions.length ? (
-          <EmptyState title="Recent policy decisions unavailable">
-            {decisionsError}. Run a scenario to populate the latest decision context.
-          </EmptyState>
-        ) : (
-          <div className="policy-decision-list">
-            {recentDecisions.map((decision, index) => {
-              const actionPlan = decision.action_plan || {};
-              return (
-                <article key={`${decision.ts_utc || decision.ts || "decision"}-${index}`} className="policy-decision-row">
-                  <span>{formatDateTime(decision.ts_utc || decision.ts)}</span>
-                  <span>{humanizePolicyLabel(decision.policy, decision.guardrail_reason)}</span>
-                  <span>{display(decision.decision)}</span>
-                  <span>{display(decision.guardrail_reason, "Not applicable")}</span>
-                  <span>{display(decision.priority_label || decision.priority)}</span>
-                  <span>{humanizeActionLabel(actionPlan.type, decision.decision, decision.guardrail_reason)}</span>
-                </article>
-              );
-            })}
+        {auditError ? (
+          <EmptyState title="Policy change audit unavailable">{auditError}</EmptyState>
+        ) : visibleAudit.length ? (
+          <div className="change-audit-list">
+            {visibleAudit.map((event, index) => (
+              <article key={`${event.ts_utc || "audit"}-${index}`} className="change-audit-row">
+                <span>{formatDateTime(event.ts_utc || event.timestamp)}</span>
+                <span>{display(event.operation)}</span>
+                <span>{display(event.policy_id)}</span>
+                <span>{display(event.policy_name)}</span>
+                <span>v{display(event.version)}</span>
+                <span>{display(event.updated_by)}</span>
+                <span>{display(event.reason)}</span>
+                <span>{display(event.success ?? event.status ?? event.valid)}</span>
+              </article>
+            ))}
           </div>
+        ) : (
+          <EmptyState title="No policy change audit events">Create, update, enable, disable, delete, or reload policies to populate audit.</EmptyState>
         )}
       </section>
     </div>
