@@ -120,6 +120,13 @@ const CHECKLIST = [
   "Scenario test completed",
 ];
 
+const SETUP_PACKAGE_CONTENTS = [
+  "Sanitized Kubernetes samples",
+  "API contract and integration guide",
+  "Policy DSL and notification setup guides",
+  "Demo scenario guide and sample environment template",
+];
+
 function Integrations({ externalLinks, anomaliesCount, rcasCount }) {
   return (
     <div className="integrations-page">
@@ -233,6 +240,38 @@ function Integrations({ externalLinks, anomaliesCount, rcasCount }) {
       </section>
 
       <section className="integrations-split">
+        <section className="panel integrations-section">
+          <div className="section-heading">
+            <div>
+              <p className="section-heading__eyebrow">Download</p>
+              <h2>Setup package</h2>
+            </div>
+          </div>
+
+          <article className="setup-download-card">
+            <div>
+              <span className="setup-download-card__badge">Panel-ready ZIP</span>
+              <h3>Download Setup Package</h3>
+              <p>
+                Includes sanitized Kubernetes samples, API contract, integration guide, policy DSL
+                guide, notification setup, demo scenario guide, and sample environment template.
+              </p>
+            </div>
+            <ul>
+              {SETUP_PACKAGE_CONTENTS.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            <a
+              className="setup-download-card__button"
+              href="/smartops-setup-package.zip"
+              download
+            >
+              Download Setup Package
+            </a>
+          </article>
+        </section>
+
         <section className="panel integrations-section">
           <div className="section-heading">
             <div>
