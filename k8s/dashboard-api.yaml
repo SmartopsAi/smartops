@@ -75,6 +75,26 @@ spec:
                 secretKeyRef:
                   name: smartops-smtp-secret
                   key: SMTP_USE_TLS
+            - name: EMAIL_PROVIDER
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-sendgrid-secret
+                  key: EMAIL_PROVIDER
+            - name: SENDGRID_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-sendgrid-secret
+                  key: SENDGRID_API_KEY
+            - name: SENDGRID_FROM_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-sendgrid-secret
+                  key: SENDGRID_FROM_EMAIL
+            - name: SENDGRID_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: smartops-sendgrid-secret
+                  key: SENDGRID_API_URL
             - name: TWILIO_ACCOUNT_SID
               valueFrom:
                 secretKeyRef:
