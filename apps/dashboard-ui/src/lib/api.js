@@ -27,10 +27,7 @@ function extractApiErrorMessage(payload, response) {
 
 async function fetchJson(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+    headers: options.headers || {},
     ...options,
   });
 
@@ -49,8 +46,15 @@ async function fetchJson(path, options = {}) {
   return payload;
 }
 
+function jsonHeaders(extraHeaders = {}) {
+  return {
+    "Content-Type": "application/json",
+    ...extraHeaders,
+  };
+}
+
 function adminHeaders(adminKey) {
-  return adminKey ? { "X-SmartOps-Admin-Key": adminKey } : {};
+  return jsonHeaders(adminKey ? { "X-SmartOps-Admin-Key": adminKey } : {});
 }
 
 export function getOverview() {
@@ -106,6 +110,7 @@ export function getDashboardState(
 export function runScenario(payload) {
   return fetchJson("/api/scenarios/run", {
     method: "POST",
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   });
 }
@@ -121,6 +126,7 @@ export function runUnmatchedAnomalyDemo(adminKey) {
 export function triggerAction(payload) {
   return fetchJson("/api/actions/trigger", {
     method: "POST",
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   });
 }
@@ -128,6 +134,7 @@ export function triggerAction(payload) {
 export function verifyDeployment(payload) {
   return fetchJson("/api/verification", {
     method: "POST",
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   });
 }
@@ -149,6 +156,7 @@ export function getPolicyDefinition(policyId) {
 export function validatePolicyDsl(payload) {
   return fetchJson("/api/policies/validate", {
     method: "POST",
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   });
 }
