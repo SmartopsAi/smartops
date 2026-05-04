@@ -300,6 +300,9 @@ def append_notification_audit(event: dict[str, Any]) -> dict[str, Any]:
         "status": event.get("status", "mocked"),
         "message": event.get("message", ""),
     }
+    for key in ("channel", "provider", "mode", "reason", "channel_result"):
+        if key in event:
+            audit_event[key] = event.get(key)
 
     try:
         audit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -336,14 +339,21 @@ def list_notification_audit(limit: int = 50) -> dict[str, Any]:
 def build_notification_preview(payload: dict[str, Any]) -> dict[str, Any]:
     settings = get_notification_settings()
     requested_channels = payload.get("channels") or ["dashboard"]
+    alert_type = payload.get("alert_type", "TEST")
     recipients = settings.get("recipients") or []
     requested_recipient_ids = set(payload.get("recipient_ids") or [])
     if requested_recipient_ids:
         recipients = [item for item in recipients if item.get("id") in requested_recipient_ids]
     recipients = [item for item in recipients if item.get("enabled", True)]
+    if alert_type != "TEST":
+        recipients = [
+            item
+            for item in recipients
+            if alert_type in (item.get("alert_types") or [])
+        ]
 
     return {
-        "alert_type": payload.get("alert_type", "TEST"),
+        "alert_type": alert_type,
         "severity": payload.get("severity", "INFO"),
         "title": payload.get("title", "SmartOps notification"),
         "message": payload.get("message", "SmartOps notification preview"),
@@ -394,7 +404,12 @@ def _email_body(preview: dict[str, Any]) -> str:
 
 
 def send_email_mock(preview: dict[str, Any]) -> dict[str, Any]:
-    return {"channel": "email", "mode": "mock", "sent": False, "recipient_count": len(preview["recipients"])}
+    return {
+        "channel": "email",
+        "mode": "mock",
+        "sent": False,
+        "recipient_count": len(_email_recipients(preview)),
+    }
 
 
 def send_email_real(payload: dict[str, Any], recipients: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
@@ -551,7 +566,12 @@ def send_email_sendgrid_real(payload: dict[str, Any], recipients: list[dict[str,
 
 
 def send_whatsapp_mock(preview: dict[str, Any]) -> dict[str, Any]:
-    return {"channel": "whatsapp", "mode": "mock", "sent": False, "recipient_count": len(preview["recipients"])}
+    return {
+        "channel": "whatsapp",
+        "mode": "mock",
+        "sent": False,
+        "recipient_count": len(_whatsapp_recipients(preview["recipients"], os.getenv("TWILIO_WHATSAPP_TO"))),
+    }
 
 
 def _normalize_whatsapp_destination(value: str | None) -> str | None:
@@ -689,7 +709,74 @@ def send_whatsapp_twilio_real(payload: dict[str, Any], recipients: list[dict[str
 
 
 def send_dashboard_mock(preview: dict[str, Any]) -> dict[str, Any]:
-    return {"channel": "dashboard", "mode": "mock", "sent": False, "recipient_count": len(preview["recipients"])}
+    return {"channel": "dashboard", "mode": "internal", "sent": True, "recipient_count": len(preview["recipients"])}
+
+
+def _configured_email_provider(settings: dict[str, Any]) -> str:
+    email_settings = ((settings.get("channels") or {}).get("email") or {})
+    provider = str(email_settings.get("provider") or _email_provider()).strip().lower()
+    if provider in {"sendgrid", "sendgrid_api"}:
+        return "sendgrid"
+    return "smtp"
+
+
+def _result_operation(result: dict[str, Any]) -> str:
+    channel = result.get("channel")
+    if channel == "dashboard":
+        return "dashboard_record"
+    if channel == "email":
+        return "email_send" if result.get("mode") == "real" else "email_mock"
+    if channel == "whatsapp":
+        return "whatsapp_send" if result.get("mode") == "real" else "whatsapp_mock"
+    return "channel_send"
+
+
+def _result_status(result: dict[str, Any]) -> str:
+    if result.get("status") == "skipped":
+        return "skipped"
+    if result.get("error"):
+        return "failed"
+    if result.get("sent") is True:
+        return "sent" if result.get("mode") == "real" else "recorded"
+    return "mocked"
+
+
+def _audit_channel_result(
+    *,
+    result: dict[str, Any],
+    preview: dict[str, Any],
+    updated_by: str,
+) -> dict[str, Any]:
+    message = result.get("error") or result.get("reason") or preview["message"]
+    return append_notification_audit(
+        {
+            "operation": _result_operation(result),
+            "updated_by": updated_by,
+            "channels": [result.get("channel")],
+            "channel": result.get("channel"),
+            "provider": result.get("provider"),
+            "mode": result.get("mode"),
+            "recipient_count": result.get("recipient_count", 0),
+            "alert_type": preview["alert_type"],
+            "status": _result_status(result),
+            "message": message,
+            "reason": result.get("reason") or result.get("error"),
+            "channel_result": result,
+        }
+    )
+
+
+def _skip_result(channel: str, reason: str, settings: dict[str, Any], recipient_count: int = 0) -> dict[str, Any]:
+    channel_settings = ((settings.get("channels") or {}).get(channel) or {})
+    return {
+        "channel": channel,
+        "provider": channel_settings.get("provider"),
+        "mode": channel_settings.get("mode") or ("internal" if channel == "dashboard" else "mock"),
+        "sent": False,
+        "recipient_count": recipient_count,
+        "status": "skipped",
+        "reason": reason,
+    }
 
 
 def mock_send_notification(payload: dict[str, Any], updated_by: str) -> dict[str, Any]:
@@ -699,14 +786,17 @@ def mock_send_notification(payload: dict[str, Any], updated_by: str) -> dict[str
     settings = get_notification_settings()
     preview = build_notification_preview(payload)
     channel_results = []
-    real_email_attempted = False
-    real_whatsapp_attempted = False
+    audits = []
     for channel in preview["channels"]:
         if channel == "email":
             email_settings = ((settings.get("channels") or {}).get("email") or {})
-            if email_settings.get("enabled") is True and email_settings.get("mode") == "real":
-                real_email_attempted = True
-                if _email_provider() == "sendgrid":
+            eligible_count = len(_email_recipients(preview))
+            if email_settings.get("enabled") is not True:
+                channel_results.append(_skip_result("email", "Email channel disabled.", settings, eligible_count))
+            elif eligible_count == 0:
+                channel_results.append(_skip_result("email", "No eligible email recipients.", settings, 0))
+            elif email_settings.get("mode") == "real":
+                if _configured_email_provider(settings) == "sendgrid":
                     channel_results.append(send_email_sendgrid_real(payload, preview["recipients"], settings))
                 else:
                     channel_results.append(send_email_real(payload, preview["recipients"], settings))
@@ -714,39 +804,38 @@ def mock_send_notification(payload: dict[str, Any], updated_by: str) -> dict[str
                 channel_results.append(send_email_mock(preview))
         elif channel == "whatsapp":
             whatsapp_settings = ((settings.get("channels") or {}).get("whatsapp") or {})
-            if whatsapp_settings.get("enabled") is True and whatsapp_settings.get("mode") == "real":
-                real_whatsapp_attempted = True
+            try:
+                fallback_to = _twilio_config().get("fallback_to") if whatsapp_settings.get("mode") == "real" else os.getenv("TWILIO_WHATSAPP_TO")
+            except NotificationServiceError:
+                fallback_to = os.getenv("TWILIO_WHATSAPP_TO")
+            eligible_count = len(_whatsapp_recipients(preview["recipients"], fallback_to))
+            if whatsapp_settings.get("enabled") is not True:
+                channel_results.append(_skip_result("whatsapp", "WhatsApp channel disabled.", settings, eligible_count))
+            elif eligible_count == 0:
+                channel_results.append(_skip_result("whatsapp", "No eligible WhatsApp recipients.", settings, 0))
+            elif whatsapp_settings.get("mode") == "real":
                 channel_results.append(send_whatsapp_twilio_real(payload, preview["recipients"], settings))
             else:
                 channel_results.append(send_whatsapp_mock(preview))
         elif channel == "dashboard":
-            channel_results.append(send_dashboard_mock(preview))
+            dashboard_settings = ((settings.get("channels") or {}).get("dashboard") or {})
+            if dashboard_settings.get("enabled") is not True:
+                channel_results.append(_skip_result("dashboard", "Dashboard channel disabled.", settings, len(preview["recipients"])))
+            elif not preview["recipients"]:
+                channel_results.append(_skip_result("dashboard", "No eligible dashboard recipients.", settings, 0))
+            else:
+                channel_results.append(send_dashboard_mock(preview))
         else:
-            channel_results.append({"channel": channel, "mode": "mock", "sent": False, "status": "skipped"})
+            channel_results.append({"channel": channel, "mode": "mock", "sent": False, "status": "skipped", "reason": "Unknown channel."})
 
     failed = any(result.get("error") for result in channel_results)
     sent = any(result.get("sent") is True for result in channel_results)
-    real_provider_attempted = real_email_attempted or real_whatsapp_attempted
-    if failed:
-        operation = "send_failed"
-    elif real_whatsapp_attempted and sent:
-        operation = "whatsapp_send"
-    elif real_email_attempted:
-        operation = "email_send"
-    else:
-        operation = "mock_send"
-    audit_status = "failed" if failed else ("sent" if real_provider_attempted and sent else "mocked")
-    audit = append_notification_audit(
-        {
-            "operation": operation,
-            "updated_by": updated_by,
-            "channels": preview["channels"],
-            "recipient_count": len(preview["recipients"]),
-            "alert_type": preview["alert_type"],
-            "status": audit_status,
-            "message": preview["message"],
-        }
+    real_provider_attempted = any(
+        result.get("mode") == "real" and result.get("status") != "skipped"
+        for result in channel_results
     )
+    for result in channel_results:
+        audits.append(_audit_channel_result(result=result, preview=preview, updated_by=updated_by))
 
     mode = "real" if real_provider_attempted else "mock"
     if failed:
@@ -766,21 +855,10 @@ def mock_send_notification(payload: dict[str, Any], updated_by: str) -> dict[str
         "mocked": not real_provider_attempted,
         "preview": preview,
         "channel_results": channel_results,
-        "audit": audit,
+        "audit": audits[-1] if audits else None,
+        "audits": audits,
         "message": response_message,
     }
-
-
-def _recipient_matches_channel(recipient: dict[str, Any], channel: str) -> bool:
-    if not recipient.get("enabled", True):
-        return False
-    if channel not in (recipient.get("channels") or []):
-        return False
-    if channel == "email":
-        return bool(recipient.get("email"))
-    if channel == "whatsapp":
-        return bool(recipient.get("whatsapp") or os.getenv("TWILIO_WHATSAPP_TO"))
-    return True
 
 
 def send_unmatched_anomaly_notification(
@@ -813,37 +891,11 @@ def send_unmatched_anomaly_notification(
         }
 
     channels_config = settings.get("channels") or {}
-    recipients = [recipient for recipient in (settings.get("recipients") or []) if recipient.get("enabled", True)]
-    enabled_channels = [
+    requested_channels = [
         channel
-        for channel, config in channels_config.items()
-        if isinstance(config, dict) and config.get("enabled") is True
-    ]
-    eligible_channels = [
-        channel
-        for channel in enabled_channels
-        if any(_recipient_matches_channel(recipient, channel) for recipient in recipients)
-    ]
-
-    if not eligible_channels:
-        audit = append_notification_audit(
-            {
-                "operation": "auto_trigger_skipped",
-                "updated_by": updated_by,
-                "channels": enabled_channels,
-                "recipient_count": len(recipients),
-                "alert_type": "UNMATCHED_ANOMALY",
-                "status": "skipped",
-                "message": "Automatic unmatched anomaly notification skipped because no eligible channels or recipients were configured.",
-            }
-        )
-        return {
-            "status": "skipped",
-            "sent": False,
-            "mocked": False,
-            "audit": audit,
-            "message": "No eligible channels or recipients are configured.",
-        }
+        for channel in ("dashboard", "email", "whatsapp")
+        if channel in channels_config
+    ] or ["dashboard", "email", "whatsapp"]
 
     anomaly_type = unmatched_anomaly.get("anomaly_type") or "unknown anomaly"
     service = unmatched_anomaly.get("service") or "unknown service"
@@ -858,7 +910,7 @@ def send_unmatched_anomaly_notification(
             "message": f"No policy matched {anomaly_type} for {service}. RCA: {rca_cause}. Window: {window_id}.",
             "service": service,
             "window_id": window_id,
-            "channels": eligible_channels,
+            "channels": requested_channels,
             "updated_by": updated_by,
         },
         updated_by=updated_by,

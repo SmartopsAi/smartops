@@ -1725,6 +1725,39 @@
   gap: 10px;
 }
 
+.settings-route-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-route-summary article {
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  padding: 14px;
+  border: 1px solid #1e3428;
+  border-radius: 14px;
+  background: #122019;
+}
+
+.settings-route-summary span,
+.settings-route-summary small {
+  color: #88a293;
+  overflow-wrap: anywhere;
+}
+
+.settings-route-summary span {
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.settings-route-summary strong {
+  color: #eaf7ef;
+  font-size: 1.15rem;
+}
+
 .settings-provider-list article {
   padding: 12px;
   border: 1px solid #1e3428;
@@ -1815,6 +1848,7 @@
   .settings-rule-grid,
   .settings-alert-form,
   .settings-result-panel__summary,
+  .settings-route-summary,
   .settings-audit-row,
   .recipient-row,
   .settings-split,
@@ -1914,6 +1948,7 @@
   .settings-recipient-fields,
   .settings-rule-grid,
   .settings-result-panel__summary,
+  .settings-route-summary,
   .settings-audit-row,
   .settings-security-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import EmptyState from "../components/EmptyState";
 import PageHeader from "../components/PageHeader";
+import { getPolicyDecisions, getUnmatchedAnomalies } from "../lib/api";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -21,6 +22,22 @@ const getWindowId = (item) =>
 
 const getTimestamp = (item) => item?.ts_utc || item?.timestamp || item?.ts || item?.created_at || "";
 
+const getEventEpoch = (value) => {
+  if (value === null || typeof value === "undefined" || value === "") return null;
+  if (typeof value === "number") return value;
+  const raw = String(value);
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const parsed = new Date(raw).getTime();
+  return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
+};
+
+const normalizePolicyDecision = (decision) => String(decision || "").toLowerCase();
+
+const getActionPlan = (policy) => policy?.action_plan || policy?.actionPlan || {};
+
+const getPolicyWindowId = (policy) =>
+  getWindowId(policy) || policy?.signal_window_id || policy?.anomaly_window_id || policy?.windowId || policy?.window_id || "";
+
 const getTopCause = (rca) => {
   const topCause = rca?.rankedCauses?.[0] || rca?.ranked_causes?.[0];
   return rca?.topCause || rca?.top_cause || topCause?.cause || "Not available";
@@ -29,6 +46,45 @@ const getTopCause = (rca) => {
 const getTopProbability = (rca) => {
   const topCause = rca?.rankedCauses?.[0] || rca?.ranked_causes?.[0];
   return rca?.probability ?? topCause?.probability ?? "Not available";
+};
+
+const verificationLabel = (policy, verification) => {
+  const decision = normalizePolicyDecision(policy?.decision);
+  if (decision === "blocked" || decision === "block") return "Skipped";
+  if (decision === "no_action" || decision === "none") return "Not required";
+  if (verification?.status) return verification.status;
+  if (getActionPlan(policy)?.verify === false) return "Not required";
+  return "Pending";
+};
+
+const resultLabel = (policy, verification) => {
+  const decision = normalizePolicyDecision(policy?.decision);
+  const reason = normalize(policy?.reason || policy?.guardrail_reason || policy?.guardrail);
+  if (decision === "blocked" || decision === "block") return "Guardrail blocked";
+  if ((decision === "no_action" || decision === "none") && reason.includes("no policy matched")) return "Unmatched policy gap";
+  if (verification?.overall === true) return "Passed";
+  if (verification?.overall === false) return "Failed";
+  if (decision === "no_action" || decision === "none") return "Not required";
+  return "Pending";
+};
+
+const actionLabel = (policy, humanizeActionLabel) => {
+  const decision = normalizePolicyDecision(policy?.decision);
+  const guardrail = policy?.guardrail_reason || policy?.guardrail;
+  const actionPlan = getActionPlan(policy);
+  if (decision === "blocked" || decision === "block") return "Blocked by guardrail";
+  if (decision === "no_action" || decision === "none") return "No action";
+  if (actionPlan.type === "scale" && actionPlan.scale?.replicas !== undefined) {
+    return `Scale to ${actionPlan.scale.replicas} replicas`;
+  }
+  return humanizeActionLabel(actionPlan.type, policy?.decision, guardrail);
+};
+
+const policyLabel = (policy, humanizePolicyLabel) => {
+  const decision = normalizePolicyDecision(policy?.decision);
+  const reason = normalize(policy?.reason || policy?.guardrail_reason || policy?.guardrail);
+  if ((decision === "no_action" || decision === "none") && reason.includes("no policy matched")) return "No matched policy";
+  return humanizePolicyLabel(policy?.policy, policy?.guardrail_reason || policy?.guardrail);
 };
 
 const buildEvidenceIncident = ({ lastAnomalyEvidence, formatDateTime, humanizePolicyLabel, humanizeActionLabel }) => {
@@ -52,17 +108,12 @@ const buildEvidenceIncident = ({ lastAnomalyEvidence, formatDateTime, humanizePo
     score: display(lastAnomalyEvidence.score),
     rca: getTopCause(rca),
     rcaProbability: getTopProbability(rca),
-    policy: humanizePolicyLabel(policy.policy, policy.guardrail),
+    policy: policyLabel(policy, humanizePolicyLabel),
     priority: policy.priority_label || policy.priority || "Not available",
     priorityScore: policy.priority_score ?? "Not available",
-    action: humanizeActionLabel(action.type, policy.decision, policy.guardrail),
-    verification: verification.status || "Not available",
-    result:
-      verification.overall === true
-        ? "Passed"
-        : verification.overall === false
-        ? "Failed"
-        : "Pending / Not available",
+    action: actionLabel({ ...policy, action_plan: action }, humanizeActionLabel),
+    verification: verificationLabel(policy, verification),
+    result: resultLabel(policy, verification),
     guardrail: policy.guardrail || "",
     decision: policy.decision || "Not available",
     detection: lastAnomalyEvidence.detection,
@@ -74,6 +125,8 @@ const buildEvidenceIncident = ({ lastAnomalyEvidence, formatDateTime, humanizePo
 
 const buildScenarioIncident = ({ currentScenarioEvidence, selectedPp2ScenarioKey, selectedWindowId }) => {
   if (!currentScenarioEvidence || !selectedWindowId) return null;
+  const isBlocked = currentScenarioEvidence.decision === "blocked" || selectedPp2ScenarioKey === "scenario-3";
+  const isUnmatched = selectedPp2ScenarioKey === "scenario-4" || currentScenarioEvidence.decision === "no_action";
 
   return {
     id: `scenario-${selectedWindowId}`,
@@ -88,21 +141,16 @@ const buildScenarioIncident = ({ currentScenarioEvidence, selectedPp2ScenarioKey
     score: "Not available",
     rca: display(currentScenarioEvidence.rcaCause),
     rcaProbability: display(currentScenarioEvidence.rcaProbability),
-    policy: display(currentScenarioEvidence.policy),
+    policy: isUnmatched ? "No matched policy" : display(currentScenarioEvidence.policy),
     priority: "Not available",
     priorityScore: "Not available",
-    action: display(currentScenarioEvidence.action),
-    verification:
-      typeof currentScenarioEvidence.verifyRequested === "boolean"
-        ? currentScenarioEvidence.verifyRequested
-          ? "Requested"
-          : "Not requested"
-        : "Not available",
-    result: currentScenarioEvidence.decision === "blocked" ? "Guardrail / no execution" : "Use linked dashboard evidence when available",
+    action: isBlocked ? "Blocked by guardrail" : isUnmatched ? "No action" : display(currentScenarioEvidence.action),
+    verification: isBlocked ? "Skipped" : isUnmatched ? "Not required" : currentScenarioEvidence.verificationStatus || "Pending",
+    result: isBlocked ? "Guardrail blocked" : isUnmatched ? "Unmatched policy gap" : "Pending",
     guardrail: currentScenarioEvidence.guardrail || "",
     decision: display(currentScenarioEvidence.decision),
     actionDetails: {
-      type: currentScenarioEvidence.action,
+      type: isBlocked || isUnmatched ? null : currentScenarioEvidence.action,
       targetReplicas: currentScenarioEvidence.targetReplicas,
     },
     verificationDetails: {
@@ -130,6 +178,22 @@ function EvidenceTimeline({
 }) {
   const [activeFilter, setActiveFilter] = useState("all");
   const [selectedIncidentId, setSelectedIncidentId] = useState("");
+  const [policyEvents, setPolicyEvents] = useState([]);
+  const [unmatchedAnomalies, setUnmatchedAnomalies] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.allSettled([getPolicyDecisions(50), getUnmatchedAnomalies()]).then(([policyResult, unmatchedResult]) => {
+      if (cancelled) return;
+      const policyPayload = policyResult.status === "fulfilled" ? policyResult.value : {};
+      const unmatchedPayload = unmatchedResult.status === "fulfilled" ? unmatchedResult.value : {};
+      setPolicyEvents(policyPayload.events || policyPayload.decisions || policyPayload.items || []);
+      setUnmatchedAnomalies(unmatchedPayload.items || unmatchedPayload.unmatched_anomalies || unmatchedPayload.anomalies || []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const incidents = useMemo(() => {
     const rcaByWindow = new Map();
@@ -140,7 +204,31 @@ function EvidenceTimeline({
       }
     });
 
-    const policyWindowId = getWindowId(latestPolicyDecision);
+    const allPolicyEvents = [latestPolicyDecision, ...policyEvents].filter(Boolean);
+    const findPolicyForWindow = (windowId, anomaly) => {
+      const explicit = allPolicyEvents.find((event) => String(getPolicyWindowId(event)) === String(windowId));
+      if (explicit) return explicit;
+
+      const windowEpoch = getEventEpoch(windowId);
+      if (windowEpoch === null) return null;
+      let best = null;
+      let bestDelta = null;
+      allPolicyEvents.forEach((event) => {
+        const eventEpoch = getEventEpoch(getTimestamp(event));
+        if (eventEpoch === null) return;
+        const delta = eventEpoch - windowEpoch;
+        if (delta < 0 || delta > 900) return;
+        const targetName = getActionPlan(event)?.target?.name;
+        const serviceMatches = !targetName || !anomaly?.service || targetName === anomaly.service;
+        if (!serviceMatches && !normalize(event.guardrail_reason).includes("restart cooldown")) return;
+        if (bestDelta === null || delta < bestDelta) {
+          best = event;
+          bestDelta = delta;
+        }
+      });
+      return best;
+    };
+
     const latestAnomalyWindowId = getWindowId(latestAnomaly);
     const rows = [];
     const seen = new Set();
@@ -158,11 +246,16 @@ function EvidenceTimeline({
     anomalySources.forEach((anomaly, index) => {
       const windowId = getWindowId(anomaly) || `anomaly-${index}`;
       const matchingRca = rcaByWindow.get(String(windowId));
-      const policyApplies =
-        (selectedWindowId && String(windowId) === String(selectedWindowId)) ||
-        (policyWindowId && String(windowId) === String(policyWindowId)) ||
-        (latestAnomalyWindowId && String(windowId) === String(latestAnomalyWindowId));
-      const actionPlan = latestPolicyDecision?.action_plan || {};
+      const matchedPolicy = findPolicyForWindow(windowId, anomaly);
+      const activePolicy = matchedPolicy;
+      const policyApplies = Boolean(activePolicy);
+      const actionPlan = getActionPlan(activePolicy);
+      const activeVerification =
+        selectedWindowId && String(windowId) === String(selectedWindowId)
+          ? verification
+          : latestAnomalyWindowId && String(windowId) === String(latestAnomalyWindowId)
+            ? verification
+            : null;
 
       addIncident({
         id: `anomaly-${windowId}`,
@@ -176,30 +269,48 @@ function EvidenceTimeline({
         score: display(anomaly.score),
         rca: matchingRca ? getTopCause(matchingRca) : "Not available",
         rcaProbability: matchingRca ? getTopProbability(matchingRca) : "Not available",
-        policy: policyApplies
-          ? humanizePolicyLabel(latestPolicyDecision?.policy, latestPolicyDecision?.guardrail_reason)
-          : "Not available",
+        policy: policyApplies ? policyLabel(activePolicy, humanizePolicyLabel) : "No matched policy",
         priority: policyApplies
-          ? latestPolicyDecision?.priority_label || latestPolicyDecision?.priority || "Not available"
+          ? activePolicy?.priority_label || activePolicy?.priority || "Not available"
           : "Not available",
-        priorityScore: policyApplies ? latestPolicyDecision?.priority_score ?? "Not available" : "Not available",
-        action: policyApplies
-          ? humanizeActionLabel(actionPlan.type, latestPolicyDecision?.decision, latestPolicyDecision?.guardrail_reason)
-          : "Not available",
-        verification: policyApplies ? verification?.status || "Not available" : "Not available",
-        result: policyApplies
-          ? verification?.overall === true
-            ? "Passed"
-            : verification?.overall === false
-            ? "Failed"
-            : "Pending / Not available"
-          : "Not available",
-        guardrail: policyApplies ? latestPolicyDecision?.guardrail_reason || "" : "",
-        decision: policyApplies ? latestPolicyDecision?.decision || "Not available" : "Not available",
+        priorityScore: policyApplies ? activePolicy?.priority_score ?? "Not available" : "Not available",
+        action: policyApplies ? actionLabel(activePolicy, humanizeActionLabel) : "No action",
+        verification: policyApplies ? verificationLabel(activePolicy, activeVerification) : "Not required",
+        result: policyApplies ? resultLabel(activePolicy, activeVerification) : "Unmatched policy gap",
+        guardrail: policyApplies ? activePolicy?.guardrail_reason || "" : "",
+        decision: policyApplies ? activePolicy?.decision || "Not available" : "Not available",
         detection: anomaly.detection,
         actionDetails: policyApplies ? actionPlan : {},
-        verificationDetails: policyApplies ? verification || {} : {},
+        verificationDetails: policyApplies ? activeVerification || {} : {},
         raw: anomaly,
+      });
+    });
+
+    unmatchedAnomalies.forEach((record, index) => {
+      const windowId = getWindowId(record) || record.window_id || `unmatched-${index}`;
+      addIncident({
+        id: `unmatched-${windowId}`,
+        source: "Unmatched policy gap",
+        windowId,
+        timestamp: getTimestamp(record),
+        detectedAt: formatDateTime(getTimestamp(record)),
+        type: String(record.anomaly_type || record.type || "unknown").toUpperCase(),
+        service: display(record.service),
+        risk: display(record.risk || record.severity),
+        score: display(record.score),
+        rca: display(record.rca_cause || record.rcaCause),
+        rcaProbability: display(record.rca_probability || record.rcaProbability),
+        policy: "No matched policy",
+        priority: "Not available",
+        priorityScore: "Not available",
+        action: "No action",
+        verification: "Not required",
+        result: "Unmatched policy gap",
+        guardrail: "",
+        decision: "no_action",
+        actionDetails: {},
+        verificationDetails: { status: "not_required" },
+        raw: record,
       });
     });
 
@@ -232,11 +343,13 @@ function EvidenceTimeline({
     anomalies,
     rcas,
     latestPolicyDecision,
+    policyEvents,
     latestAnomaly,
     latestRca,
     verification,
     lastAnomalyEvidence,
     anomalyHistory,
+    unmatchedAnomalies,
     currentScenarioEvidence,
     selectedWindowId,
     selectedPp2ScenarioKey,

@@ -54,6 +54,19 @@ const DEFAULT_ALERT = {
 const display = (value, fallback = "Not available") =>
   value === null || typeof value === "undefined" || value === "" ? fallback : value;
 
+const coerceBoolean = (value, fallback = false) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off"].includes(normalized)) return false;
+  }
+  if (typeof value === "undefined" || value === null) return fallback;
+  return Boolean(value);
+};
+
+const normalizeArray = (value) => (Array.isArray(value) ? value : []);
+
 const normalizeList = (payload, keys) => {
   if (Array.isArray(payload)) return payload;
   for (const key of keys) {
@@ -62,10 +75,18 @@ const normalizeList = (payload, keys) => {
   return [];
 };
 
+const normalizeChannel = (defaults, channel = {}) => {
+  const merged = { ...defaults, ...channel };
+  return {
+    ...merged,
+    enabled: coerceBoolean(merged.enabled, defaults.enabled),
+  };
+};
+
 const mergeChannels = (channels = {}) => ({
-  dashboard: { ...DEFAULT_CHANNELS.dashboard, ...(channels.dashboard || {}) },
-  email: { ...DEFAULT_CHANNELS.email, ...(channels.email || {}) },
-  whatsapp: { ...DEFAULT_CHANNELS.whatsapp, ...(channels.whatsapp || {}) },
+  dashboard: normalizeChannel(DEFAULT_CHANNELS.dashboard, channels.dashboard),
+  email: normalizeChannel(DEFAULT_CHANNELS.email, channels.email),
+  whatsapp: normalizeChannel(DEFAULT_CHANNELS.whatsapp, channels.whatsapp),
 });
 
 const channelChip = (channel) => {
@@ -84,11 +105,27 @@ const channelBadgeClass = (channel) =>
 
 const safeSettings = (payload) => {
   const settings = payload?.settings || payload || {};
+  const sourceRecipients =
+    Array.isArray(settings.recipients) && settings.recipients.length ? settings.recipients : DEFAULT_RECIPIENTS;
   return {
     channels: mergeChannels(settings.channels),
-    recipients: Array.isArray(settings.recipients) && settings.recipients.length ? settings.recipients : DEFAULT_RECIPIENTS,
+    recipients: sourceRecipients.map((recipient) => ({
+      ...recipient,
+      enabled: coerceBoolean(recipient.enabled, true),
+      channels: normalizeArray(recipient.channels),
+      alert_types: normalizeArray(recipient.alert_types),
+    })),
     rules: { ...DEFAULT_RULES, ...(settings.rules || {}) },
   };
+};
+
+const ruleForAlertType = (alertType) => {
+  if (alertType === "UNMATCHED_ANOMALY") return "unmatched_anomaly";
+  if (alertType === "POLICY_BLOCKED") return "policy_blocked";
+  if (alertType === "VERIFICATION_FAILED") return "verification_failed";
+  if (alertType === "P1_PRIORITY") return "p1_priority";
+  if (alertType === "HIGH_RISK") return "high_or_critical_anomaly";
+  return "";
 };
 
 function Settings() {
@@ -118,6 +155,87 @@ function Settings() {
   const [actionError, setActionError] = useState("");
 
   const visibleAudit = useMemo(() => auditEvents.slice(0, 12), [auditEvents]);
+
+  const getEligibleRecipients = useCallback(
+    ({ channel, alertType = "UNMATCHED_ANOMALY" }) =>
+      recipients.filter((recipient) => {
+        if (!coerceBoolean(recipient.enabled, true)) return false;
+        if (!normalizeArray(recipient.channels).includes(channel)) return false;
+        if (alertType !== "TEST" && !normalizeArray(recipient.alert_types).includes(alertType)) return false;
+        if (channel === "email") return Boolean(recipient.email);
+        if (channel === "whatsapp") return Boolean(recipient.whatsapp);
+        return true;
+      }),
+    [recipients]
+  );
+
+  const getChannelRoute = useCallback(
+    ({ channel, alertType = "UNMATCHED_ANOMALY", selectedChannels = CHANNEL_KEYS }) => {
+      const selected = normalizeArray(selectedChannels);
+      const channelConfig = channels[channel] || {};
+      const ruleKey = ruleForAlertType(alertType);
+      const eligibleRecipients = getEligibleRecipients({ channel, alertType });
+
+      if (!selected.includes(channel)) {
+        return { channel, willSend: false, recipients: eligibleRecipients, reason: "channel not selected" };
+      }
+      if (!coerceBoolean(channelConfig.enabled, false)) {
+        return { channel, willSend: false, recipients: eligibleRecipients, reason: "channel disabled" };
+      }
+      if (ruleKey && !coerceBoolean(rules[ruleKey], true)) {
+        return { channel, willSend: false, recipients: eligibleRecipients, reason: `${ruleKey} rule disabled` };
+      }
+      if (!eligibleRecipients.length) {
+        return { channel, willSend: false, recipients: eligibleRecipients, reason: `no eligible ${channel} recipients` };
+      }
+
+      const mode = channelConfig.mode || (channel === "dashboard" ? "internal" : "mock");
+      const provider = channelConfig.provider ? ` via ${channelConfig.provider}` : "";
+      return {
+        channel,
+        willSend: true,
+        recipients: eligibleRecipients,
+        reason: channel === "dashboard" ? "enabled internal dashboard route" : `${mode}${provider}`,
+      };
+    },
+    [channels, getEligibleRecipients, rules]
+  );
+
+  const unmatchedRoutingSummary = useMemo(
+    () =>
+      CHANNEL_KEYS.map((channel) =>
+        getChannelRoute({
+          channel,
+          alertType: "UNMATCHED_ANOMALY",
+          selectedChannels: CHANNEL_KEYS,
+        })
+      ),
+    [getChannelRoute]
+  );
+
+  const testRoutingSummary = useMemo(
+    () =>
+      CHANNEL_KEYS.map((channel) =>
+        getChannelRoute({
+          channel,
+          alertType: "TEST",
+          selectedChannels: testChannels,
+        })
+      ),
+    [getChannelRoute, testChannels]
+  );
+
+  const alertRoutingSummary = useMemo(
+    () =>
+      CHANNEL_KEYS.map((channel) =>
+        getChannelRoute({
+          channel,
+          alertType: alertForm.alert_type,
+          selectedChannels: alertForm.channels,
+        })
+      ),
+    [alertForm.alert_type, alertForm.channels, getChannelRoute]
+  );
 
   const loadSettings = useCallback(async () => {
     try {
@@ -326,11 +444,26 @@ function Settings() {
         <label key={channel}>
           <input
             type="checkbox"
-            checked={selected.includes(channel)}
+            checked={normalizeArray(selected).includes(channel)}
             onChange={() => toggleChannelSelection(channel, setter)}
           />
           <span>{channel}</span>
         </label>
+      ))}
+    </div>
+  );
+
+  const renderRouteSummary = (summary) => (
+    <div className="settings-route-summary">
+      {summary.map((route) => (
+        <article key={route.channel}>
+          <span>{route.channel}</span>
+          <strong>{route.willSend ? "Yes" : "No"}</strong>
+          <small>{route.reason}</small>
+          <small>
+            Recipients: {route.recipients.map((recipient) => recipient.name || recipient.id).join(", ") || "None"}
+          </small>
+        </article>
       ))}
     </div>
   );
@@ -450,6 +583,35 @@ function Settings() {
             <article>Secrets are stored in Kubernetes/backend only; never in frontend code or settings JSON.</article>
           </div>
         </section>
+      </section>
+
+      <section className="panel settings-section">
+        <div className="section-heading">
+          <div>
+            <p className="section-heading__eyebrow">Automatic Routing</p>
+            <h2>UNMATCHED_ANOMALY route summary</h2>
+          </div>
+        </div>
+        <div className="settings-route-summary settings-route-summary--three">
+          <article>
+            <span>Dashboard will record</span>
+            <strong>{unmatchedRoutingSummary.find((route) => route.channel === "dashboard")?.willSend ? "Yes" : "No"}</strong>
+            <small>{unmatchedRoutingSummary.find((route) => route.channel === "dashboard")?.reason}</small>
+          </article>
+          <article>
+            <span>Email will be sent</span>
+            <strong>{unmatchedRoutingSummary.find((route) => route.channel === "email")?.willSend ? "Yes" : "No"}</strong>
+            <small>{unmatchedRoutingSummary.find((route) => route.channel === "email")?.reason}</small>
+          </article>
+          <article>
+            <span>WhatsApp will be sent</span>
+            <strong>{unmatchedRoutingSummary.find((route) => route.channel === "whatsapp")?.willSend ? "Yes" : "No"}</strong>
+            <small>{unmatchedRoutingSummary.find((route) => route.channel === "whatsapp")?.reason}</small>
+          </article>
+        </div>
+        <p className="settings-muted-text">
+          If email test succeeds but automatic email does not, check channel enabled, recipient channel, alert rule, and the audit channel result.
+        </p>
       </section>
 
       <section className="panel settings-section">
@@ -662,6 +824,10 @@ function Settings() {
             <span>Channels</span>
             {renderChannelCheckboxes(testChannels, setTestChannels)}
           </div>
+          <div className="settings-field">
+            <span>Selected route preview</span>
+            {renderRouteSummary(testRoutingSummary)}
+          </div>
           <label className="settings-field">
             <span>Message</span>
             <textarea value={testMessage} onChange={(event) => setTestMessage(event.target.value)} />
@@ -718,6 +884,10 @@ function Settings() {
                   channels: typeof updater === "function" ? updater(current.channels) : updater,
                 }))
               )}
+            </div>
+            <div className="settings-field settings-alert-form__message">
+              <span>Selected route preview</span>
+              {renderRouteSummary(alertRoutingSummary)}
             </div>
           </div>
           <button className="action-button action-button--primary" type="button" onClick={handleSendAlert} disabled={!adminKey.trim() || sending}>
